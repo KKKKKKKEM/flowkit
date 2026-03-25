@@ -2,388 +2,307 @@ package downloader
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/proxy"
-
 	"github.com/KKKKKKKEM/grasp/pkg/core"
 )
 
-const (
-	MetaKeyProxy     = "proxy"      // "http://..." | "socks5://..."
-	MetaKeyChunkSize = "chunk_size" // int64 bytes, default 4MB
-)
+const defaultChunkSize int64 = 1 * 1024 * 1024
 
-const defaultChunkSize int64 = 4 * 1024 * 1024
+type SimpleHTTPDownloader struct{}
 
-// chunkState 记录单个分片的下载状态，序列化到 <filename>.grasp 文件实现断点续传。
-type chunkState struct {
-	Index int   `json:"index"`
-	Start int64 `json:"start"`
-	End   int64 `json:"end"`
-	Done  bool  `json:"done"`
+func (d *SimpleHTTPDownloader) Name() string {
+	return "simple-http"
 }
 
-type resumeMeta struct {
-	URL    string       `json:"url"`
-	Total  int64        `json:"total"`
-	Chunks []chunkState `json:"chunks"`
-}
-
-type HTTPDownloader struct{}
-
-func (d *HTTPDownloader) Name() string { return "http" }
-
-func (d *HTTPDownloader) CanHandle(task *core.DownloadTask) bool {
+func (d *SimpleHTTPDownloader) CanHandle(task *core.DownloadTask) bool {
 	u := strings.ToLower(task.URL)
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
 
-func (d *HTTPDownloader) Download(ctx context.Context, task *core.DownloadTask) (*core.DownloadResult, error) {
-	maxAttempts := task.Retry + 1
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
-	retryInterval := task.RetryInterval
-	if retryInterval <= 0 {
-		retryInterval = time.Second
-	}
-
-	var (
-		result *core.DownloadResult
-		err    error
-	)
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		result, err = d.download(ctx, task)
-		if err == nil {
-			return result, nil
+func (d *SimpleHTTPDownloader) Download(ctx context.Context, task *core.DownloadTask) (*core.DownloadResult, error) {
+	result, err := d.download(ctx, task)
+	if err != nil {
+		if task.OnError != nil {
+			task.OnError(err)
 		}
-		if attempt == maxAttempts {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(retryInterval):
-		}
+		return nil, err
 	}
-	return nil, err
+	if task.OnComplete != nil {
+		task.OnComplete(result)
+	}
+	return result, nil
 }
 
-func (d *HTTPDownloader) download(ctx context.Context, task *core.DownloadTask) (*core.DownloadResult, error) {
-	client, err := buildClient(task)
+func (d *SimpleHTTPDownloader) Stream(ctx context.Context, task *core.DownloadTask) (io.ReadCloser, error) {
+	client := buildClient(task)
+	req, err := newRequest(ctx, http.MethodGet, task.URL, task.Headers)
 	if err != nil {
 		return nil, err
 	}
-
-	total, supportsRange, err := probe(ctx, client, task)
+	resp, err := doWithRetry(client, req, task.Retry, task.Interval())
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+	return resp.Body, nil
+}
 
-	destPath := resolveDestPath(task)
+func (d *SimpleHTTPDownloader) download(ctx context.Context, task *core.DownloadTask) (*core.DownloadResult, error) {
+	client := buildClient(task)
+
+	totalSize, acceptsRanges := probeContentLength(ctx, client, task)
 
 	concurrency := task.Concurrency
 	if concurrency <= 0 {
-		concurrency = 4
+		concurrency = 1
 	}
 
-	var written int64
-	if total <= 0 || !supportsRange || concurrency == 1 {
-		written, err = downloadSingle(ctx, client, task, destPath)
-	} else {
-		written, err = downloadChunked(ctx, client, task, destPath, total, concurrency)
-	}
+	dest, err := task.RealDest()
 	if err != nil {
 		return nil, err
 	}
 
-	return &core.DownloadResult{FilePath: destPath, BytesWritten: written}, nil
+	f, err := os.Create(dest)
+	if err != nil {
+		return nil, fmt.Errorf("create file %s: %w", dest, err)
+	}
+	defer f.Close()
+
+	// Range 并发分块：需服务端支持 Accept-Ranges: bytes
+	if concurrency <= 1 || !acceptsRanges || totalSize <= 0 {
+		concurrency = 1
+	}
+	written, err := runSegments(ctx, client, task, f, totalSize, concurrency)
+	if err != nil {
+		return nil, err
+	}
+	return &core.DownloadResult{FilePath: dest, BytesWritten: written}, nil
 }
 
-func buildClient(task *core.DownloadTask) (*http.Client, error) {
-	transport := &http.Transport{}
+type writeCmd struct {
+	offset int64
+	buf    []byte
+}
 
-	proxyRaw := task.Proxy
-	if proxyRaw == "" {
-		proxyRaw, _ = task.StringMeta(MetaKeyProxy)
+// runSegments splits [0, totalSize) into `concurrency` segments, launches one
+// producer goroutine per segment, and drains all writeCmd values through a
+// single consumer that calls f.WriteAt. When totalSize <= 0 the file size is
+// unknown and a single segment covering the whole response is used instead.
+func runSegments(ctx context.Context, client *http.Client, task *core.DownloadTask, f *os.File, totalSize int64, concurrency int) (int64, error) {
+	chunkSize := task.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultChunkSize
 	}
 
-	switch {
-	case proxyRaw == "env":
-		transport.Proxy = http.ProxyFromEnvironment
-	case proxyRaw != "":
-		proxyURL, err := url.Parse(proxyRaw)
-		if err != nil {
-			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyRaw, err)
-		}
-		switch strings.ToLower(proxyURL.Scheme) {
-		case "http", "https":
-			transport.Proxy = http.ProxyURL(proxyURL)
-		case "socks5", "socks5h":
-			if err := applySocks5(transport, proxyURL); err != nil {
-				return nil, err
+	type segment struct {
+		start int64 // byte offset in the file (used for WriteAt and Range header)
+		end   int64 // inclusive; -1 means "no Range header, stream to EOF"
+	}
+
+	var segments []segment
+	if totalSize > 0 && concurrency > 1 {
+		for start := int64(0); start < totalSize; start += chunkSize {
+			end := start + chunkSize - 1
+			if end >= totalSize {
+				end = totalSize - 1
 			}
-		default:
-			return nil, fmt.Errorf("unsupported proxy scheme %q", proxyURL.Scheme)
+			segments = append(segments, segment{start: start, end: end})
 		}
+	} else {
+		segments = []segment{{start: 0, end: -1}}
 	}
 
-	return &http.Client{Transport: transport, Timeout: task.Timeout}, nil
-}
+	// Channel capacity = concurrency so fast producers don't stall waiting for
+	// the consumer while still bounding in-flight memory to ~concurrency chunks.
+	cmds := make(chan writeCmd, concurrency)
 
-func applySocks5(transport *http.Transport, proxyURL *url.URL) error {
-	var auth *proxy.Auth
-	if proxyURL.User != nil {
-		pass, _ := proxyURL.User.Password()
-		auth = &proxy.Auth{User: proxyURL.User.Username(), Password: pass}
-	}
-	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
-	if err != nil {
-		return fmt.Errorf("socks5 dialer: %w", err)
-	}
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialer.Dial(network, addr)
-	}
-	return nil
-}
-
-func probe(ctx context.Context, client *http.Client, task *core.DownloadTask) (total int64, supportsRange bool, err error) {
-	req, err := newRequest(ctx, http.MethodHead, task)
-	if err != nil {
-		return 0, false, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, false, fmt.Errorf("HEAD %s: %w", task.URL, err)
-	}
-	resp.Body.Close()
-
-	return resp.ContentLength, resp.Header.Get("Accept-Ranges") == "bytes", nil
-}
-
-func resolveDestPath(task *core.DownloadTask) string {
-	info, err := os.Stat(task.Dest)
-	if err == nil && info.IsDir() {
-		return filepath.Join(task.Dest, task.FilenameFromURL())
-	}
-	return task.Dest
-}
-
-func downloadSingle(ctx context.Context, client *http.Client, task *core.DownloadTask, destPath string) (int64, error) {
-	req, err := newRequest(ctx, http.MethodGet, task)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	f, err := os.Create(destPath)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	return copyWithProgress(f, resp.Body, -1, task.OnProgress)
-}
-
-func downloadChunked(ctx context.Context, client *http.Client, task *core.DownloadTask, destPath string, total int64, concurrency int) (int64, error) {
-	chunkSize := defaultChunkSize
-	if cs, ok := task.Int64Meta(MetaKeyChunkSize); ok && cs > 0 {
-		chunkSize = cs
-	}
-
-	metaPath := destPath + ".grasp"
-	rm, err := loadOrBuildResumeMeta(metaPath, task.URL, total, chunkSize)
-	if err != nil {
-		return 0, err
-	}
-
-	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	if err := f.Truncate(total); err != nil {
-		return 0, fmt.Errorf("preallocate %s: %w", destPath, err)
-	}
-
-	written, err := runChunkWorkers(ctx, client, task, f, rm, metaPath, total, concurrency)
-	if err != nil {
-		return 0, err
-	}
-
-	os.Remove(metaPath)
-	return written, nil
-}
-
-func runChunkWorkers(ctx context.Context, client *http.Client, task *core.DownloadTask, f *os.File, rm *resumeMeta, metaPath string, total int64, concurrency int) (int64, error) {
-	var completedBytes atomic.Int64
-	for _, c := range rm.Chunks {
-		if c.Done {
-			completedBytes.Add(c.End - c.Start + 1)
-		}
-	}
+	var (
+		wg         sync.WaitGroup
+		downloaded atomic.Int64
+		firstErr   atomic.Value
+	)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var metaMu sync.Mutex
 	sem := make(chan struct{}, concurrency)
-	errCh := make(chan error, 1)
-	var wg sync.WaitGroup
 
-	for i := range rm.Chunks {
-		if rm.Chunks[i].Done {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return 0, ctx.Err()
-		case sem <- struct{}{}:
-		}
-
+	for _, seg := range segments {
 		wg.Add(1)
-		go func(c *chunkState) {
+		sem <- struct{}{}
+		go func(seg segment) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			n, err := downloadChunk(ctx, client, task, f, c)
-			if err != nil {
-				select {
-				case errCh <- err:
-					cancel()
-				default:
-				}
+			if firstErr.Load() != nil {
 				return
 			}
 
-			completedBytes.Add(n)
-			if task.OnProgress != nil {
-				task.OnProgress(completedBytes.Load(), total)
+			err := produceSegment(ctx, client, task, seg.start, seg.end, cmds)
+			if err != nil && firstErr.CompareAndSwap(nil, err) {
+				cancel()
 			}
-			metaMu.Lock()
-			c.Done = true
-			// 忽略元数据写入错误，不中断下载
-			_ = saveResumeMeta(metaPath, rm)
-			metaMu.Unlock()
-		}(&rm.Chunks[i])
+		}(seg)
 	}
 
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(cmds)
+	}()
 
-	select {
-	case err := <-errCh:
-		return 0, err
-	default:
-		return completedBytes.Load(), nil
-	}
-}
-
-func downloadChunk(ctx context.Context, client *http.Client, task *core.DownloadTask, f *os.File, c *chunkState) (int64, error) {
-	req, err := newRequest(ctx, http.MethodGet, task)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", c.Start, c.End))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("chunk %d: %w", c.Index, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusPartialContent {
-		return 0, fmt.Errorf("chunk %d: unexpected status %d", c.Index, resp.StatusCode)
-	}
-
-	buf, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("chunk %d read: %w", c.Index, err)
-	}
-	// WriteAt 是并发安全的（各分片写不同偏移量，互不重叠）
-	n, err := f.WriteAt(buf, c.Start)
-	return int64(n), err
-}
-
-func loadOrBuildResumeMeta(metaPath, rawURL string, total, chunkSize int64) (*resumeMeta, error) {
-	if data, err := os.ReadFile(metaPath); err == nil {
-		var rm resumeMeta
-		if json.Unmarshal(data, &rm) == nil && rm.URL == rawURL && rm.Total == total {
-			return &rm, nil
+	var written int64
+	for cmd := range cmds {
+		nw, writeErr := f.WriteAt(cmd.buf, cmd.offset)
+		written += int64(nw)
+		if writeErr != nil {
+			firstErr.CompareAndSwap(nil, fmt.Errorf("write at %d: %w", cmd.offset, writeErr))
+			cancel()
+		}
+		if task.OnProgress != nil {
+			task.OnProgress(downloaded.Add(int64(len(cmd.buf))), totalSize)
 		}
 	}
 
-	rm := &resumeMeta{URL: rawURL, Total: total, Chunks: buildChunks(total, chunkSize)}
-	if err := saveResumeMeta(metaPath, rm); err != nil {
-		return nil, err
+	if v := firstErr.Load(); v != nil {
+		return 0, v.(error)
 	}
-	return rm, nil
+	return written, nil
 }
 
-func buildChunks(total, chunkSize int64) []chunkState {
-	var chunks []chunkState
-	for i, start := 0, int64(0); start < total; i++ {
-		end := start + chunkSize - 1
-		if end > total-1 {
-			end = total - 1
-		}
-		chunks = append(chunks, chunkState{Index: i, Start: start, End: end})
-		start = end + 1
-	}
-	return chunks
-}
-
-func saveResumeMeta(path string, rm *resumeMeta) error {
-	data, err := json.Marshal(rm)
+// produceSegment streams one HTTP segment (Range or full) and sends writeCmd
+// values to cmds. start is the file offset; end == -1 means no Range header.
+func produceSegment(ctx context.Context, client *http.Client, task *core.DownloadTask, start, end int64, cmds chan<- writeCmd) error {
+	req, err := newRequest(ctx, http.MethodGet, task.URL, task.Headers)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	if end >= 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	}
+
+	resp, err := doWithRetry(client, req, task.Retry, task.Interval())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if end >= 0 && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("segment %d-%d: expected 206, got %d", start, end, resp.StatusCode)
+	}
+	if end < 0 && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	offset := start
+	buf := make([]byte, 32*1024)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			// Copy the slice: the producer must not reuse buf until the consumer
+			// has finished with the previous payload.
+			payload := make([]byte, n)
+			copy(payload, buf[:n])
+			select {
+			case cmds <- writeCmd{offset: offset, buf: payload}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			offset += int64(n)
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read segment %d: %w", start, readErr)
+		}
+	}
 }
 
-func newRequest(ctx context.Context, method string, task *core.DownloadTask) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, task.URL, nil)
+// doWithRetry reconstructs the request on each retry because the response body
+// of a prior attempt may have been partially consumed.
+func doWithRetry(client *http.Client, req *http.Request, maxRetry int, interval time.Duration) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxRetry; attempt++ {
+		if attempt > 0 {
+			newReq, err := http.NewRequestWithContext(req.Context(), req.Method, req.URL.String(), nil)
+			if err != nil {
+				return nil, err
+			}
+			newReq.Header = req.Header
+			req = newReq
+			time.Sleep(interval)
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("after %d attempt(s): %w", maxRetry+1, lastErr)
+}
+
+func buildClient(task *core.DownloadTask) *http.Client {
+	transport := &http.Transport{}
+
+	switch task.Proxy {
+	case "":
+		transport.Proxy = nil
+	case "env":
+		transport.Proxy = http.ProxyFromEnvironment
+	default:
+		proxyURL, err := url.Parse(task.Proxy)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+
+	return &http.Client{
+		Timeout:   task.Timeout,
+		Transport: transport,
+	}
+}
+
+func probeContentLength(ctx context.Context, client *http.Client, task *core.DownloadTask) (int64, bool) {
+	req, err := newRequest(ctx, http.MethodHead, task.URL, task.Headers)
+	if err != nil {
+		return -1, false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return -1, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return -1, false
+	}
+
+	acceptsRanges := strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes")
+	return resp.ContentLength, acceptsRanges
+}
+
+func newRequest(ctx context.Context, method, rawURL string, headers map[string]string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	for k, v := range task.Headers {
+	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	return req, nil
 }
-
-func copyWithProgress(dst io.Writer, src io.Reader, total int64, onProgress core.ProgressFunc) (int64, error) {
-	if onProgress == nil {
-		return io.Copy(dst, src)
-	}
-	var written atomic.Int64
-	r := io.TeeReader(src, writerFunc(func(p []byte) (int, error) {
-		n, err := dst.Write(p)
-		written.Add(int64(n))
-		onProgress(written.Load(), total)
-		return n, err
-	}))
-	_, err := io.Copy(io.Discard, r)
-	return written.Load(), err
-}
-
-type writerFunc func([]byte) (int, error)
-
-func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

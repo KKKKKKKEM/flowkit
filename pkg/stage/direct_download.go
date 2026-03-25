@@ -86,7 +86,7 @@ func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 		}
 	}
 
-	downloader := downloaderImp.HTTPDownloader{}
+	downloader := downloaderImp.SimpleHTTPDownloader{}
 	result, err := downloader.Download(ctx, task)
 	if err != nil {
 		if task.OnError != nil {
