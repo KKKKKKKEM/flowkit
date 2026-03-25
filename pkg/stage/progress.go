@@ -10,24 +10,31 @@ import (
 )
 
 const barWidth = 30
+const minRenderInterval = 120 * time.Millisecond
+const speedSmoothing = 0.25
 
 type progressBar struct {
-	total     int64
-	startTime time.Time
-	lastBytes int64
-	lastTime  time.Time
-	mu        sync.Mutex
-	out       io.Writer
-	done      bool
+	total       int64
+	startTime   time.Time
+	startBytes  int64
+	lastBytes   int64
+	lastTime    time.Time
+	lastRender  time.Time
+	speed       float64
+	initialized bool
+	mu          sync.Mutex
+	out         io.Writer
+	done        bool
 }
 
 func newProgressBar(total int64) *progressBar {
 	now := time.Now()
 	return &progressBar{
-		total:     total,
-		startTime: now,
-		lastTime:  now,
-		out:       os.Stderr,
+		total:      total,
+		startTime:  now,
+		lastTime:   now,
+		lastRender: now.Add(-minRenderInterval),
+		out:        os.Stderr,
 	}
 }
 
@@ -39,21 +46,51 @@ func (b *progressBar) update(downloaded int64) {
 	}
 
 	now := time.Now()
-	elapsed := now.Sub(b.lastTime).Seconds()
-
-	var speed float64
-	if elapsed > 0 {
-		speed = float64(downloaded-b.lastBytes) / elapsed
+	if !b.initialized {
+		b.initialized = true
+		b.startBytes = downloaded
+		b.lastBytes = downloaded
+		b.lastTime = now
+	} else {
+		elapsed := now.Sub(b.lastTime).Seconds()
+		if elapsed > 0 {
+			instant := float64(downloaded-b.lastBytes) / elapsed
+			if instant < 0 {
+				instant = 0
+			}
+			if b.speed == 0 {
+				b.speed = instant
+			} else {
+				b.speed = (1-speedSmoothing)*b.speed + speedSmoothing*instant
+			}
+		}
+		b.lastBytes = downloaded
+		b.lastTime = now
 	}
-	b.lastBytes = downloaded
-	b.lastTime = now
+
+	if now.Sub(b.lastRender) < minRenderInterval && !(b.total > 0 && downloaded >= b.total) {
+		return
+	}
+	b.lastRender = now
+	speed := b.speed
+	displayDownloaded := downloaded
+	if b.total > 0 && displayDownloaded > b.total {
+		displayDownloaded = b.total
+	}
 
 	var pct float64
 	var eta string
 	if b.total > 0 {
-		pct = float64(downloaded) / float64(b.total) * 100
+		pct = float64(displayDownloaded) / float64(b.total) * 100
+		if pct > 100 {
+			pct = 100
+		}
 		if speed > 0 {
-			remaining := float64(b.total-downloaded) / speed
+			remainingBytes := b.total - displayDownloaded
+			if remainingBytes < 0 {
+				remainingBytes = 0
+			}
+			remaining := float64(remainingBytes) / speed
 			eta = fmt.Sprintf(" ETA %s", formatDuration(time.Duration(remaining)*time.Second))
 		} else {
 			eta = " ETA --"
@@ -79,7 +116,7 @@ func (b *progressBar) update(downloaded int64) {
 	if b.total > 0 {
 		line = fmt.Sprintf("\r[%s] %5.1f%% %s/%s %s/s%s",
 			bar, pct,
-			formatBytes(downloaded), formatBytes(b.total),
+			formatBytes(displayDownloaded), formatBytes(b.total),
 			formatBytes(int64(speed)),
 			eta,
 		)
@@ -104,11 +141,15 @@ func (b *progressBar) finish() {
 	elapsed := time.Since(b.startTime)
 	var avgSpeed float64
 	if elapsed.Seconds() > 0 {
-		avgSpeed = float64(b.lastBytes) / elapsed.Seconds()
+		avgSpeed = float64(b.lastBytes-b.startBytes) / elapsed.Seconds()
+	}
+	finalBytes := b.lastBytes
+	if b.total > 0 && finalBytes > b.total {
+		finalBytes = b.total
 	}
 	fmt.Fprintf(b.out, "\r[%s] 100.0%% %s %s/s — done in %s\n",
 		strings.Repeat("=", barWidth),
-		formatBytes(b.lastBytes),
+		formatBytes(finalBytes),
 		formatBytes(int64(avgSpeed)),
 		formatDuration(elapsed),
 	)

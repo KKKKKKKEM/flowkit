@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
@@ -12,17 +11,24 @@ import (
 
 func main() {
 	pipeline := core.NewPipeline()
-
-	node := stage.NewDirectDownloadStage(
-		&downloader.Task{
-			URL:           "https://freemacsoft.net/downloads/AppCleaner_3.6.8.zip",
-			Dest:          "AppCleaner_3.6.8.zip",
+	task, err := downloader.NewTaskFromURI(
+		context.TODO(),
+		"https://videos.pexels.com/video-files/3929620/3929620-hd_1920_1080_30fps.mp4",
+		&downloader.Opts{
 			Timeout:       30 * time.Second,
 			Retry:         3,
 			RetryInterval: 2 * time.Second,
 			Overwrite:     true,
 			Concurrency:   2,
 		},
+		nil,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	node := stage.NewDirectDownloadStage(
+		task,
 		stage.WithProgressBar(),
 	)
 	pipeline.Run(context.TODO(), node)

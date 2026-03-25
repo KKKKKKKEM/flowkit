@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -77,6 +78,25 @@ type Opts struct {
 type Task struct {
 	*Opts
 	Request *http.Request
+}
+
+// NewTaskFromURI 根据 URI 快速构造下载任务。
+// opts 为空时会使用默认配置；headers 可选。
+func NewTaskFromURI(ctx context.Context, uri string, opts *Opts, headers map[string]string) (*Task, error) {
+	if strings.TrimSpace(uri) == "" {
+		return nil, fmt.Errorf("uri is empty")
+	}
+	req, err := NewRequest(ctx, http.MethodGet, uri, headers)
+	if err != nil {
+		return nil, err
+	}
+	if opts == nil {
+		opts = &Opts{}
+	}
+	return &Task{
+		Opts:    opts,
+		Request: req,
+	}, nil
 }
 
 func (t *Task) GetSavePath() (string, error) {

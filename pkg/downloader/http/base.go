@@ -236,6 +236,9 @@ func (d *BaseHTTPDownloader) Do(ctx context.Context, task *downloader.Task, f *o
 	for i := range meta.Segments {
 		downloaded += meta.Segments[i].Written
 	}
+	if task.OnProgress != nil {
+		task.OnProgress(downloaded, meta.TotalSize)
+	}
 
 	var written int64
 	for cmd := range cmds {
@@ -347,6 +350,8 @@ func (d *BaseHTTPDownloader) downloadSegment(ctx context.Context, task *download
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+			// Move resume cursor immediately so retries continue from the latest enqueued byte.
+			seg.Written += int64(n)
 			offset += int64(n)
 		}
 		if readErr == io.EOF {
