@@ -2,10 +2,12 @@ package stage
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
 	downloaderImp "github.com/KKKKKKKEM/grasp/pkg/downloader"
+	"github.com/KKKKKKKEM/grasp/pkg/downloader/http"
 )
 
 type stageOptions struct {
@@ -42,13 +44,19 @@ func WithRetry(maxAttempts int, interval time.Duration) Option {
 }
 
 type DirectDownloadStage struct {
-	Task *core.DownloadTask
+	Task *downloaderImp.Task
 	opts stageOptions
 }
 
 func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 	task := s.Task
 	o := s.opts
+	if task == nil {
+		return nil, fmt.Errorf("task is nil")
+	}
+	if task.Opts == nil {
+		task.Opts = &downloaderImp.Opts{}
+	}
 
 	if task.Proxy == "" && o.proxy != "" {
 		task.Proxy = o.proxy
@@ -78,7 +86,7 @@ func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 			}
 		}
 		origComplete := task.OnComplete
-		task.OnComplete = func(result *core.DownloadResult) {
+		task.OnComplete = func(result *downloaderImp.DownloadResult) {
 			bar.finish()
 			if origComplete != nil {
 				origComplete(result)
@@ -86,21 +94,15 @@ func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 		}
 	}
 
-	downloader := downloaderImp.SimpleHTTPDownloader{}
-	result, err := downloader.Download(ctx, task)
+	downloader := http.NewSimpleHTTPDownloader()
+	_, err := downloader.Download(ctx, task)
 	if err != nil {
-		if task.OnError != nil {
-			task.OnError(err)
-		}
 		return nil, err
-	}
-	if task.OnComplete != nil {
-		task.OnComplete(result)
 	}
 	return nil, nil
 }
 
-func NewDirectDownloadStage(task *core.DownloadTask, options ...Option) *DirectDownloadStage {
+func NewDirectDownloadStage(task *downloaderImp.Task, options ...Option) *DirectDownloadStage {
 	s := &DirectDownloadStage{Task: task}
 	for _, opt := range options {
 		opt(&s.opts)
