@@ -1,7 +1,6 @@
 package stage
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -33,6 +32,7 @@ type stageOptions struct {
 	timeout       time.Duration
 	retry         int
 	retryInterval time.Duration
+	inputKey      string // 从 rc.Inputs 中读取 Task 的 key，默认为 "task"
 }
 
 type Option func(*stageOptions)
@@ -60,17 +60,44 @@ func WithRetry(maxAttempts int, interval time.Duration) Option {
 	}
 }
 
-type DirectDownloadStage struct {
-	Task *downloader.Task
-	opts stageOptions
+func WithInputKey(inputKey string) Option {
+	return func(o *stageOptions) {
+		o.inputKey = inputKey
+	}
 }
 
-func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
-	task := s.Task
-	o := s.opts
-	if task == nil {
-		return nil, fmt.Errorf("task is nil")
+type DirectDownloadStage struct {
+	stageName string // stage 唯一标识符
+	opts      stageOptions
+}
+
+func (s *DirectDownloadStage) Name() string {
+	return s.stageName
+}
+
+func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
+	// 优先从运行时输入读取 Task，其次使用构造时指定的默认 Task
+	var task *downloader.Task
+
+	inputKey := s.opts.inputKey
+	if inputKey == "" {
+		inputKey = "task"
 	}
+
+	if val, ok := rc.Inputs[inputKey]; ok {
+		if t, ok := val.(*downloader.Task); ok {
+			task = t
+		}
+	}
+
+	if task == nil {
+		return core.StageResult{
+			Status: core.StageFailed,
+			Err:    fmt.Errorf("task not found: neither in rc.Inputs[\"%s\"] nor in stage default", inputKey),
+		}
+	}
+
+	o := s.opts
 	if task.Opts == nil {
 		task.Opts = &downloader.Opts{}
 	}
@@ -92,7 +119,10 @@ func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 		p := getSharedProgress()
 		savePath, err := task.GetSavePath()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get save path: %w", err)
+			return core.StageResult{
+				Status: core.StageFailed,
+				Err:    fmt.Errorf("failed to get save path: %w", err),
+			}
 		}
 
 		bar := p.AddBar(0,
@@ -149,30 +179,49 @@ func (s *DirectDownloadStage) Do(ctx context.Context) (core.Stage, error) {
 		}
 
 		dl := http.NewSimpleHTTPDownloader()
-		result, err := dl.Download(ctx, task)
+		result, err := dl.Download(rc, task)
 		if err != nil {
 			bar.Abort(true)
 			p.Wait()
-			return nil, err
+			return core.StageResult{
+				Status: core.StageFailed,
+				Err:    err,
+			}
 		}
 		if task.OnComplete != nil {
 			task.OnComplete(result)
 		}
 
 		p.Wait()
-		return nil, nil
+		return core.StageResult{
+			Status: core.StageSuccess,
+			Outputs: map[string]any{
+				"download_result": result,
+			},
+		}
 	}
 
 	dl := http.NewSimpleHTTPDownloader()
-	_, err := dl.Download(ctx, task)
+	result, err := dl.Download(rc, task)
 	if err != nil {
-		return nil, err
+		return core.StageResult{
+			Status: core.StageFailed,
+			Err:    err,
+		}
 	}
-	return nil, nil
+	return core.StageResult{
+		Status: core.StageSuccess,
+		Outputs: map[string]any{
+			"download_result": result,
+		},
+	}
 }
 
-func NewDirectDownloadStage(task *downloader.Task, options ...Option) *DirectDownloadStage {
-	s := &DirectDownloadStage{Task: task}
+// NewDirectDownloadStage 创建一个 DirectDownloadStage，可选地指定默认 Task
+func NewDirectDownloadStage(name string, options ...Option) *DirectDownloadStage {
+	s := &DirectDownloadStage{
+		stageName: name,
+	}
 	for _, opt := range options {
 		opt(&s.opts)
 	}
