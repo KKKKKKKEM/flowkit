@@ -158,7 +158,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 		_ = f.Truncate(meta.TotalSize)
 	}
 
-	_, err = d.Do(ctx, task, f, meta, concurrency)
+	_, err = d.RunSegments(ctx, task, f, meta, concurrency)
 	_ = f.Close()
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 	return &downloader.DownloadResult{Path: dest, Size: info.Size()}, nil
 }
 
-func (d *BaseHTTPDownloader) Do(ctx context.Context, task *downloader.Task, f *os.File, meta *downloader.Meta, concurrency int) (int64, error) {
+func (d *BaseHTTPDownloader) RunSegments(ctx context.Context, task *downloader.Task, f *os.File, meta *downloader.Meta, concurrency int) (int64, error) {
 	var (
 		wg sync.WaitGroup
 

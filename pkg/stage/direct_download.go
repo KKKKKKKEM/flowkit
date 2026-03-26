@@ -33,6 +33,7 @@ type stageOptions struct {
 	retry         int
 	retryInterval time.Duration
 	inputKey      string // 从 rc.Inputs 中读取 Task 的 key，默认为 "task"
+	nextStageName string
 }
 
 type Option func(*stageOptions)
@@ -66,6 +67,12 @@ func WithInputKey(inputKey string) Option {
 	}
 }
 
+func WithNextStage(stageName string) Option {
+	return func(o *stageOptions) {
+		o.nextStageName = stageName
+	}
+}
+
 type DirectDownloadStage struct {
 	stageName string // stage 唯一标识符
 	opts      stageOptions
@@ -87,6 +94,14 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	if val, ok := rc.Inputs[inputKey]; ok {
 		if t, ok := val.(*downloader.Task); ok {
 			task = t
+		}
+	}
+
+	if task == nil {
+		if val, ok := rc.Values[inputKey]; ok {
+			if t, ok := val.(*downloader.Task); ok {
+				task = t
+			}
 		}
 	}
 
@@ -195,6 +210,7 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 		p.Wait()
 		return core.StageResult{
 			Status: core.StageSuccess,
+			Next:   o.nextStageName,
 			Outputs: map[string]any{
 				"download_result": result,
 			},
@@ -211,6 +227,7 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	}
 	return core.StageResult{
 		Status: core.StageSuccess,
+		Next:   o.nextStageName,
 		Outputs: map[string]any{
 			"download_result": result,
 		},

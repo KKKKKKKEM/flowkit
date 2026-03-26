@@ -137,13 +137,15 @@ func (lp *LinearPipeline) makeStageRunner() func(*RunContext, Stage) StageResult
 
 // FSMPipeline 是有向状态机模式的管道，通过 Stage.Result.Next 驱动
 type FSMPipeline struct {
-	stages map[string]Stage
-	mw     []Middleware
+	stages    map[string]Stage
+	mw        []Middleware
+	maxVisits int
 }
 
 func NewFSMPipeline() *FSMPipeline {
 	return &FSMPipeline{
-		stages: make(map[string]Stage),
+		stages:    make(map[string]Stage),
+		maxVisits: 100,
 	}
 }
 
@@ -160,6 +162,14 @@ func (fp *FSMPipeline) Register(stages ...Stage) Pipeline {
 
 func (fp *FSMPipeline) Use(mw ...Middleware) *FSMPipeline {
 	fp.mw = append(fp.mw, mw...)
+	return fp
+}
+
+// WithMaxVisits 设置单个 stage 最大访问次数，防止意外环路。
+func (fp *FSMPipeline) WithMaxVisits(max int) *FSMPipeline {
+	if max > 0 {
+		fp.maxVisits = max
+	}
 	return fp
 }
 
@@ -191,8 +201,8 @@ func (fp *FSMPipeline) Run(rc *RunContext, entry string) (*RunReport, error) {
 		name := st.Name()
 
 		// 环检测
-		if visited[name] > 100 {
-			return report, fmt.Errorf("possible cycle detected: stage %s visited %d times", name, visited[name])
+		if visited[name] > fp.maxVisits {
+			return report, fmt.Errorf("possible cycle detected: stage %s visited %d times (limit=%d)", name, visited[name], fp.maxVisits)
 		}
 		visited[name]++
 
