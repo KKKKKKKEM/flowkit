@@ -1,14 +1,20 @@
 package extractor
 
-import "time"
+import (
+	"time"
+
+	"github.com/KKKKKKKEM/grasp/pkg/extractors"
+)
 
 type stageOptions struct {
-	proxy         string
-	timeout       time.Duration
-	retry         int
-	headers       map[string]string
-	inputKey      string // 从 rc.Inputs 中读取 Task 的 key，默认为 "task"
-	nextStageName string
+	proxy           string
+	timeout         time.Duration
+	retry           int
+	headers         map[string]string
+	inputKey        string // 从 rc.Inputs 中读取 Task 的 key，默认为 "task"
+	nextStageName   string
+	maxRounds       int
+	defaultSelector extractors.Selector
 }
 type Option func(*stageOptions)
 

@@ -32,7 +32,7 @@ func (s *Stage) Mount(extractors ...extractors.Extractor) *Stage {
 
 func (s *Stage) Name() string { return s.stageName }
 
-func (s *Stage) Run(rc *core.RunContext) core.StageResult {
+func (s *Stage) loadTask(rc *core.RunContext) (*extractors.Task, error) {
 
 	var task *extractors.Task
 	inputKey := s.opts.inputKey
@@ -47,44 +47,103 @@ func (s *Stage) Run(rc *core.RunContext) core.StageResult {
 	}
 
 	if task == nil {
-		return core.StageResult{
-			Status: core.StageFailed,
-			Err:    fmt.Errorf("task not found: neither in rc.Inputs[\"%s\"] nor in stage default", inputKey),
-		}
+		return nil, fmt.Errorf("task not found: neither in rc.Inputs[\"%s\"] nor in stage default", inputKey)
 	}
 
-	rawURL := task.URL
+	return task, nil
 
-	// 收集所有匹配当前 URL 的 Parser，按 Priority 降序排列
-	matched := s.match(rawURL)
-	if len(matched) == 0 {
-		return core.StageResult{
-			Status: core.StageFailed,
-			Err:    fmt.Errorf("no parser matched URL: %s", rawURL),
+}
+func (s *Stage) resolve(rawURL, forcedHint string) *extractors.Parser {
+	if forcedHint != "" {
+		// 按 Extractor.Name() + Parser.Hint 精确指定
+		for _, ext := range s.extractors {
+			for _, p := range ext.Handlers() {
+				if p.Hint == forcedHint {
+					return p
+				}
+			}
 		}
+		return nil // 指定了但找不到，返回 nil 报错
 	}
+	// 回到正则 match 逻辑
+	return s.match(rawURL)[0]
+}
 
-	parser := matched[0] // 最高优先级
-
-	// 如果上游通过 rc.Values 注入了 Selector，透传给 task
+func (s *Stage) resolveSelector(rc *core.RunContext, task *extractors.Task) extractors.Selector {
+	// 1. Task 级最高优先（调用方显式指定）
+	if task.Selector != nil {
+		return task.Selector
+	}
+	// 2. 运行时注入（上游 Stage 通过 rc.Values 传入）
 	if sel, ok := rc.Values["selector"].(extractors.Selector); ok {
-		task.Selector = sel
+		return sel
 	}
+	// 3. Stage 构造时的默认值
+	return s.opts.defaultSelector // 可以是 nil，调用方判空
+}
 
-	items, err := parser.Parse(rc, task, task.Opts)
+func (s *Stage) Run(rc *core.RunContext) core.StageResult {
+
+	task, err := s.loadTask(rc)
 	if err != nil {
 		return core.StageResult{
 			Status: core.StageFailed,
-			Err:    fmt.Errorf("[%s] parse failed: %w", parser.Hint, err),
+			Err:    err,
 		}
+	}
+	maxRounds := task.MaxRounds
+	if maxRounds == 0 {
+		maxRounds = s.opts.maxRounds // Stage 级默认值
+	}
+	if maxRounds == 0 {
+		maxRounds = 1
+	}
+
+	var allDirect []extractors.ParseItem
+	queue := []string{task.URL}
+	for round := 0; round < maxRounds && len(queue) > 0; round++ {
+		var nextQueue []string
+
+		for _, rawURL := range queue {
+			parser := s.resolve(rawURL, task.ForcedParser)
+			if parser == nil {
+				return core.StageResult{Status: core.StageFailed, Err: fmt.Errorf("no parser matched URL: %s (forced: %s)", rawURL, task.ForcedParser)}
+			}
+
+			subTask := task.CloneWithURL(rawURL)
+			items, err := parser.Parse(rc, subTask, task.Opts)
+			if err != nil {
+				return core.StageResult{Status: core.StageFailed, Err: err}
+			}
+
+			if task.OnItems != nil {
+				task.OnItems(round, items)
+			}
+
+			// Selector 在此处统一触发
+			sel := s.resolveSelector(rc, task)
+			if sel != nil {
+				items, err = sel.Select(rc, items)
+				if err != nil {
+					return core.StageResult{Status: core.StageFailed, Err: err}
+				}
+			}
+
+			for _, item := range items {
+				if item.IsDirect {
+					allDirect = append(allDirect, item)
+				} else {
+					nextQueue = append(nextQueue, item.URI) // 继续解析
+				}
+			}
+		}
+		queue = nextQueue
 	}
 
 	return core.StageResult{
-		Status: core.StageSuccess,
-		Next:   s.opts.nextStageName,
-		Outputs: map[string]any{
-			"items": items,
-		},
+		Status:  core.StageSuccess,
+		Next:    s.opts.nextStageName,
+		Outputs: map[string]any{"items": allDirect},
 	}
 }
 

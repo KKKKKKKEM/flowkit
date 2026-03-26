@@ -50,8 +50,23 @@ type Task struct {
 	OnItems      func(round int, items []ParseItem)
 }
 
-type Selector interface {
-	Select(ctx context.Context, items []ParseItem) ([]ParseItem, error)
+func (t *Task) CloneWithURL(url string) *Task {
+	optsCopy := *t.Opts // Opts 是值类型字段的结构体，直接值拷贝
+	// Headers 是 map，需要独立拷贝（避免并发写）
+	if t.Opts.Headers != nil {
+		optsCopy.Headers = make(map[string]string, len(t.Opts.Headers))
+		for k, v := range t.Opts.Headers {
+			optsCopy.Headers[k] = v
+		}
+	}
+	return &Task{
+		Opts:         &optsCopy,
+		URL:          url,
+		ForcedParser: t.ForcedParser,
+		Selector:     t.Selector,
+		MaxRounds:    t.MaxRounds,
+		OnItems:      t.OnItems,
+	}
 }
 
 // Extractor — Handler 的容器 + 命名空间
