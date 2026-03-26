@@ -6,9 +6,9 @@ import (
 	"log"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
-	"github.com/KKKKKKKEM/grasp/pkg/extractors"
-	"github.com/KKKKKKKEM/grasp/pkg/extractors/pexels"
-	"github.com/KKKKKKKEM/grasp/pkg/stage/extractor"
+	"github.com/KKKKKKKEM/grasp/pkg/extract"
+	"github.com/KKKKKKKEM/grasp/pkg/extract/pexels"
+	extractStage "github.com/KKKKKKKEM/grasp/pkg/stage/extract"
 	"github.com/KKKKKKKEM/grasp/pkg/stage/http_download"
 )
 
@@ -22,14 +22,14 @@ func main() {
 		http_download.WithProgressBar(),
 	)
 
-	extractorStage := extractor.NewStage("extractor")
+	extractorStage := extractStage.NewStage("extractor")
 	extractorStage.Mount(&pexels.APIParser{})
 
 	// 注册 stage
 	pipeline.Register(downloadStage, extractorStage)
 
-	task := &extractors.Task{
-		Opts: &extractors.Opts{},
+	task := &extract.Task{
+		Opts: &extract.Opts{},
 		URL:  "https://api.pexels.com/v1/photos/1000",
 	}
 

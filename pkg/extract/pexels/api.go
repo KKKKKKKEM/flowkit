@@ -6,9 +6,9 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
-	"github.com/KKKKKKKEM/grasp/pkg/downloader/http"
-	"github.com/KKKKKKKEM/grasp/pkg/extractors"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
+	"github.com/KKKKKKKEM/grasp/pkg/download/http"
+	"github.com/KKKKKKKEM/grasp/pkg/extract"
 	"github.com/tidwall/gjson"
 )
 
@@ -19,8 +19,8 @@ func (p *APIParser) Name() string {
 	return "pexels-api-parser"
 }
 
-func (p *APIParser) Handlers() []*extractors.Parser {
-	return []*extractors.Parser{
+func (p *APIParser) Handlers() []*extract.Parser {
+	return []*extract.Parser{
 		{
 			Pattern:  regexp.MustCompile(`^https://api\.pexels\.com/v1/photos/(\d+)$`),
 			Priority: 0,
@@ -30,10 +30,10 @@ func (p *APIParser) Handlers() []*extractors.Parser {
 	}
 }
 
-func (p *APIParser) ParseImageAPI(ctx context.Context, task *extractors.Task, opts *extractors.Opts) ([]extractors.ParseItem, error) {
+func (p *APIParser) ParseImageAPI(ctx context.Context, task *extract.Task, opts *extract.Opts) ([]extract.ParseItem, error) {
 
 	httpClient := &http.SimpleHTTPClient{}
-	request, err := downloader.NewRequest("GET", task.URL, task.Headers)
+	request, err := download.NewRequest("GET", task.URL, task.Headers)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +57,9 @@ func (p *APIParser) ParseImageAPI(ctx context.Context, task *extractors.Task, op
 	url := gjson.GetBytes(body, "url").String()
 	id := gjson.GetBytes(body, "id").Int()
 
-	var items []extractors.ParseItem
+	var items []extract.ParseItem
 	gjson.GetBytes(body, "src").ForEach(func(key, value gjson.Result) bool {
-		items = append(items, extractors.ParseItem{
+		items = append(items, extract.ParseItem{
 			Name:     fmt.Sprintf("%s (%s)", alt, key.String()),
 			URI:      value.String(),
 			IsDirect: true,

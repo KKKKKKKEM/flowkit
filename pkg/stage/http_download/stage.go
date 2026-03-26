@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
-	"github.com/KKKKKKKEM/grasp/pkg/downloader/http"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
+	"github.com/KKKKKKKEM/grasp/pkg/download/http"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
@@ -22,9 +22,9 @@ func (s *DirectDownloadStage) Name() string {
 }
 
 // applyFallback 将 fb 中的非零值填充到 task.Opts，header 仅补充不覆盖。
-func applyFallback(task *downloader.Task, fb *downloader.Opts, headers map[string]string) {
+func applyFallback(task *download.Task, fb *download.Opts, headers map[string]string) {
 	if task.Opts == nil {
-		task.Opts = &downloader.Opts{}
+		task.Opts = &download.Opts{}
 	}
 	if task.Opts.Proxy == "" {
 		task.Opts.Proxy = fb.Proxy
@@ -52,7 +52,7 @@ func applyFallback(task *downloader.Task, fb *downloader.Opts, headers map[strin
 
 func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	// 优先从运行时输入读取 Task，其次使用构造时指定的默认 Task
-	var task *downloader.Task
+	var task *download.Task
 
 	inputKey := s.opts.inputKey
 	if inputKey == "" {
@@ -60,7 +60,7 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	}
 
 	if val, ok := rc.Values[inputKey]; ok {
-		if t, ok := val.(*downloader.Task); ok {
+		if t, ok := val.(*download.Task); ok {
 			task = t
 		}
 	}
@@ -133,7 +133,7 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 		}
 
 		origComplete := task.OnComplete
-		task.OnComplete = func(result *downloader.DownloadResult) {
+		task.OnComplete = func(result *download.DownloadResult) {
 			mu.Lock()
 			bar.SetTotal(-1, true)
 			mu.Unlock()

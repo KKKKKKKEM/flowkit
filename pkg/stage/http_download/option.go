@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
 	"github.com/vbauerster/mpb/v8"
 )
 
@@ -14,8 +14,8 @@ var (
 )
 
 type stageOptions struct {
-	fallback      downloader.Opts   // proxy/timeout/retry 等兜底值
-	headers       map[string]string // request header 兜底值（downloader.Opts 不含 headers）
+	fallback      download.Opts     // proxy/timeout/retry 等兜底值
+	headers       map[string]string // request header 兜底值（download.Opts 不含 headers）
 	progressBar   bool
 	inputKey      string // 从 rc.Values 中读取 Task 的 key，默认为 "task"
 	nextStageName string
@@ -27,7 +27,7 @@ func WithProgressBar() Option {
 	return func(o *stageOptions) { o.progressBar = true }
 }
 
-func WithFallback(opts *downloader.Opts) Option {
+func WithFallback(opts *download.Opts) Option {
 	return func(o *stageOptions) {
 		if opts != nil {
 			o.fallback = *opts

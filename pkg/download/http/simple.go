@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
 )
 
 type SimpleHTTPClient struct {
@@ -13,14 +13,14 @@ type SimpleHTTPClient struct {
 
 func (c *SimpleHTTPClient) Name() string { return "http-client" }
 
-func (c *SimpleHTTPClient) Request(ctx context.Context, req *http.Request, opts *downloader.Opts) (*http.Response, error) {
+func (c *SimpleHTTPClient) Request(ctx context.Context, req *http.Request, opts *download.Opts) (*http.Response, error) {
 	client := c.buildClient(opts)
 	return client.Do(req.WithContext(ctx))
 }
 
-func (c *SimpleHTTPClient) buildClient(opts *downloader.Opts) *http.Client {
+func (c *SimpleHTTPClient) buildClient(opts *download.Opts) *http.Client {
 	if opts == nil {
-		opts = &downloader.Opts{}
+		opts = &download.Opts{}
 	}
 	transport := &http.Transport{}
 

@@ -1,11 +1,11 @@
-package extractor
+package extract
 
 import (
 	"fmt"
 	"sort"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
-	"github.com/KKKKKKKEM/grasp/pkg/extractors"
+	"github.com/KKKKKKKEM/grasp/pkg/extract"
 )
 
 // Stage 通用解析 stage：
@@ -13,7 +13,7 @@ import (
 type Stage struct {
 	stageName  string
 	opts       stageOptions
-	extractors []extractors.Extractor
+	extractors []extract.Extractor
 }
 
 func NewStage(name string, options ...Option) *Stage {
@@ -25,23 +25,23 @@ func NewStage(name string, options ...Option) *Stage {
 }
 
 // Mount 注册一个或多个 Extractor
-func (s *Stage) Mount(extractors ...extractors.Extractor) *Stage {
+func (s *Stage) Mount(extractors ...extract.Extractor) *Stage {
 	s.extractors = append(s.extractors, extractors...)
 	return s
 }
 
 func (s *Stage) Name() string { return s.stageName }
 
-func (s *Stage) loadTask(rc *core.RunContext) (*extractors.Task, error) {
+func (s *Stage) loadTask(rc *core.RunContext) (*extract.Task, error) {
 
-	var task *extractors.Task
+	var task *extract.Task
 	inputKey := s.opts.inputKey
 	if inputKey == "" {
 		inputKey = "task"
 	}
 
 	if val, ok := rc.Values[inputKey]; ok {
-		if t, ok := val.(*extractors.Task); ok {
+		if t, ok := val.(*extract.Task); ok {
 			task = t
 		}
 	}
@@ -56,9 +56,9 @@ func (s *Stage) loadTask(rc *core.RunContext) (*extractors.Task, error) {
 }
 
 // applyFallback 将 fb 中的非零值填充到 task.Opts，header 仅补充不覆盖。
-func applyFallback(task *extractors.Task, fb *extractors.Opts) {
+func applyFallback(task *extract.Task, fb *extract.Opts) {
 	if task.Opts == nil {
-		task.Opts = &extractors.Opts{}
+		task.Opts = &extract.Opts{}
 	}
 	if task.Opts.Proxy == "" {
 		task.Opts.Proxy = fb.Proxy
@@ -81,7 +81,7 @@ func applyFallback(task *extractors.Task, fb *extractors.Opts) {
 	}
 }
 
-func (s *Stage) resolve(rawURL, forcedHint string) *extractors.Parser {
+func (s *Stage) resolve(rawURL, forcedHint string) *extract.Parser {
 	if forcedHint != "" {
 		for _, ext := range s.extractors {
 			for _, p := range ext.Handlers() {
@@ -99,13 +99,13 @@ func (s *Stage) resolve(rawURL, forcedHint string) *extractors.Parser {
 	return candidates[0]
 }
 
-func (s *Stage) resolveSelector(rc *core.RunContext, task *extractors.Task) extractors.Selector {
+func (s *Stage) resolveSelector(rc *core.RunContext, task *extract.Task) extract.Selector {
 	// 1. Task 级最高优先（调用方显式指定）
 	if task.Selector != nil {
 		return task.Selector
 	}
 	// 2. 运行时注入（上游 Stage 通过 rc.Values 传入）
-	if sel, ok := rc.Values["selector"].(extractors.Selector); ok {
+	if sel, ok := rc.Values["selector"].(extract.Selector); ok {
 		return sel
 	}
 	// 3. Stage 构造时的默认值
@@ -129,7 +129,7 @@ func (s *Stage) Run(rc *core.RunContext) core.StageResult {
 		maxRounds = 1
 	}
 
-	var allDirect []extractors.ParseItem
+	var allDirect []extract.ParseItem
 	queue := []string{task.URL}
 	for round := 0; round < maxRounds && len(queue) > 0; round++ {
 		var nextQueue []string
@@ -183,8 +183,8 @@ func (s *Stage) Run(rc *core.RunContext) core.StageResult {
 }
 
 // match 返回所有正则命中的 Parser，按 Priority 降序
-func (s *Stage) match(rawURL string) []*extractors.Parser {
-	var candidates []*extractors.Parser
+func (s *Stage) match(rawURL string) []*extract.Parser {
+	var candidates []*extract.Parser
 	for _, ext := range s.extractors {
 		for _, p := range ext.Handlers() {
 			if p.Pattern != nil && p.Pattern.MatchString(rawURL) {

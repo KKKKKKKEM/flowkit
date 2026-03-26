@@ -1,11 +1,11 @@
-package extractors
+package extract
 
 import (
 	"context"
 	"regexp"
 	"time"
 
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
 )
 
 type Opts struct {
@@ -24,8 +24,8 @@ type Opts struct {
 	Meta map[string]any `json:"meta,omitempty"`
 }
 
-func (o *Opts) ToDownloaderOpts() *downloader.Opts {
-	return &downloader.Opts{
+func (o *Opts) ToDownloaderOpts() *download.Opts {
+	return &download.Opts{
 		Proxy:   o.Proxy,
 		Timeout: o.Timeout,
 		Retry:   o.Retry,

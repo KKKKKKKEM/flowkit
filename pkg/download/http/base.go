@@ -11,13 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/KKKKKKKEM/grasp/pkg/downloader"
+	"github.com/KKKKKKKEM/grasp/pkg/download"
 	"github.com/KKKKKKKEM/grasp/pkg/utils"
 )
 
 type Requester interface {
 	Name() string
-	Request(ctx context.Context, req *http.Request, opts *downloader.Opts) (*http.Response, error)
+	Request(ctx context.Context, req *http.Request, opts *download.Opts) (*http.Response, error)
 }
 
 const defaultChunkSize int64 = 1 * 1024 * 1024
@@ -32,14 +32,14 @@ type WriteCmd struct {
 	buf    []byte
 }
 
-func ensureTaskOpts(task *downloader.Task) *downloader.Opts {
+func ensureTaskOpts(task *download.Task) *download.Opts {
 	if task.Opts == nil {
-		task.Opts = &downloader.Opts{}
+		task.Opts = &download.Opts{}
 	}
 	return task.Opts
 }
 
-func (d *BaseHTTPDownloader) CanHandle(task *downloader.Task) bool {
+func (d *BaseHTTPDownloader) CanHandle(task *download.Task) bool {
 	if task == nil || task.Request == nil || task.Request.URL == nil {
 		return false
 	}
@@ -47,7 +47,7 @@ func (d *BaseHTTPDownloader) CanHandle(task *downloader.Task) bool {
 	return scheme == "http" || scheme == "https"
 }
 
-func (d *BaseHTTPDownloader) Probe(ctx context.Context, task *downloader.Task) (int64, bool) {
+func (d *BaseHTTPDownloader) Probe(ctx context.Context, task *download.Task) (int64, bool) {
 	opts := ensureTaskOpts(task)
 	headRequest := task.Request.Clone(ctx)
 	headRequest.Method = http.MethodHead
@@ -68,22 +68,22 @@ func (d *BaseHTTPDownloader) Probe(ctx context.Context, task *downloader.Task) (
 	return resp.ContentLength, acceptsRanges
 }
 
-func (d *BaseHTTPDownloader) buildSegments(totalSize, chunkSize int64, concurrency int) []downloader.Segment {
+func (d *BaseHTTPDownloader) buildSegments(totalSize, chunkSize int64, concurrency int) []download.Segment {
 	if totalSize > 0 && concurrency > 1 {
-		var segments []downloader.Segment
+		var segments []download.Segment
 		for start := int64(0); start < totalSize; start += chunkSize {
 			end := start + chunkSize - 1
 			if end >= totalSize {
 				end = totalSize - 1
 			}
-			segments = append(segments, downloader.Segment{Start: start, End: end, Idx: int(start / chunkSize)})
+			segments = append(segments, download.Segment{Start: start, End: end, Idx: int(start / chunkSize)})
 		}
 		return segments
 	}
-	return []downloader.Segment{{Start: 0, End: -1}}
+	return []download.Segment{{Start: 0, End: -1}}
 }
 
-func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task) (*downloader.DownloadResult, error) {
+func (d *BaseHTTPDownloader) Download(ctx context.Context, task *download.Task) (*download.DownloadResult, error) {
 	if task == nil || task.Request == nil {
 		return nil, fmt.Errorf("task or request is nil")
 	}
@@ -111,7 +111,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 	}
 
 	allSegments := d.buildSegments(totalSize, chunkSize, concurrency)
-	var meta *downloader.Meta
+	var meta *download.Meta
 
 	switch {
 
@@ -123,7 +123,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 
 	case utils.FileExistsAt(dest): // 已经下载完了
 		if info, err := os.Stat(dest); err == nil {
-			return &downloader.DownloadResult{Path: dest, Size: info.Size()}, nil
+			return &download.DownloadResult{Path: dest, Size: info.Size()}, nil
 		}
 
 	case utils.FileExistsAt(tmp): // 下载了一部分
@@ -138,7 +138,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 	if meta == nil {
 		_ = os.Remove(tmp)
 		_ = task.RemoveMeta()
-		meta = &downloader.Meta{
+		meta = &download.Meta{
 			TotalSize: totalSize,
 			ChunkSize: chunkSize,
 			Segments:  allSegments,
@@ -168,23 +168,23 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *downloader.Task
 		return nil, fmt.Errorf("rename %s -> %s: %w", tmp, dest, err)
 	}
 	if totalSize > 0 {
-		return &downloader.DownloadResult{Path: dest, Size: totalSize}, nil
+		return &download.DownloadResult{Path: dest, Size: totalSize}, nil
 	}
 	info, statErr := os.Stat(dest)
 	if statErr != nil {
 		return nil, fmt.Errorf("stat %s: %w", dest, statErr)
 	}
-	return &downloader.DownloadResult{Path: dest, Size: info.Size()}, nil
+	return &download.DownloadResult{Path: dest, Size: info.Size()}, nil
 }
 
-func (d *BaseHTTPDownloader) RunSegments(ctx context.Context, task *downloader.Task, f *os.File, meta *downloader.Meta, concurrency int) (int64, error) {
+func (d *BaseHTTPDownloader) RunSegments(ctx context.Context, task *download.Task, f *os.File, meta *download.Meta, concurrency int) (int64, error) {
 	var (
 		wg sync.WaitGroup
 
 		firstErr atomic.Value
 	)
 	cmds := make(chan WriteCmd)
-	segments := make(chan downloader.Segment)
+	segments := make(chan download.Segment)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -278,7 +278,7 @@ func (d *BaseHTTPDownloader) RunSegments(ctx context.Context, task *downloader.T
 
 }
 
-func (d *BaseHTTPDownloader) produceSegments(ctx context.Context, task *downloader.Task, cmds chan<- WriteCmd, segments <-chan downloader.Segment) error {
+func (d *BaseHTTPDownloader) produceSegments(ctx context.Context, task *download.Task, cmds chan<- WriteCmd, segments <-chan download.Segment) error {
 	segRequest := task.Request.Clone(ctx)
 	for {
 		select {
@@ -308,7 +308,7 @@ func (d *BaseHTTPDownloader) produceSegments(ctx context.Context, task *download
 	}
 }
 
-func (d *BaseHTTPDownloader) downloadSegment(ctx context.Context, task *downloader.Task, segRequest *http.Request, seg *downloader.Segment, cmds chan<- WriteCmd) error {
+func (d *BaseHTTPDownloader) downloadSegment(ctx context.Context, task *download.Task, segRequest *http.Request, seg *download.Segment, cmds chan<- WriteCmd) error {
 
 	resumeOffset := seg.Start + seg.Written
 	if seg.End >= 0 {
@@ -363,7 +363,7 @@ func (d *BaseHTTPDownloader) downloadSegment(ctx context.Context, task *download
 	}
 }
 
-func (d *BaseHTTPDownloader) Fetch(ctx context.Context, task *downloader.Task) (*http.Response, error) {
+func (d *BaseHTTPDownloader) Fetch(ctx context.Context, task *download.Task) (*http.Response, error) {
 	if task == nil || task.Request == nil {
 		return nil, fmt.Errorf("task or request is nil")
 	}

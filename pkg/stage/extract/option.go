@@ -1,20 +1,20 @@
-package extractor
+package extract
 
 import (
-	"github.com/KKKKKKKEM/grasp/pkg/extractors"
+	"github.com/KKKKKKKEM/grasp/pkg/extract"
 )
 
 type stageOptions struct {
-	fallback        extractors.Opts // proxy/timeout/retry/headers 等兜底值
-	inputKey        string          // 从 rc.Values 中读取 Task 的 key，默认为 "task"
+	fallback        extract.Opts // proxy/timeout/retry/headers 等兜底值
+	inputKey        string       // 从 rc.Values 中读取 Task 的 key，默认为 "task"
 	nextStageName   string
 	maxRounds       int
-	defaultSelector extractors.Selector
+	defaultSelector extract.Selector
 }
 
 type Option func(*stageOptions)
 
-func WithFallback(opts *extractors.Opts) Option {
+func WithFallback(opts *extract.Opts) Option {
 	return func(o *stageOptions) {
 		if opts != nil {
 			o.fallback = *opts
