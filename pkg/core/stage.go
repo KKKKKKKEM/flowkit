@@ -26,15 +26,15 @@ type Stage interface {
 // StageResult 是单个 Stage 执行的结果
 type StageResult struct {
 	// Status 本次执行的结果状态
-	Status StageStatus
+	Status StageStatus `json:"status,omitempty"`
 	// Next 用于 FSM/DAG 模式指定下一个 stage 的名字，Linear 模式可忽略
-	Next string
+	Next string `json:"next,omitempty"`
 	// Outputs 业务层输出的数据，会合并到 rc.Values 供后续 stage 读取
-	Outputs map[string]any
+	Outputs map[string]any `json:"outputs,omitempty"`
 	// Metrics 本次执行收集的指标（例如下载字节数、耗时、重试次数）
-	Metrics map[string]float64
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 	// Err 如果执行失败则设置错误
-	Err error
+	Err error `json:"err,omitempty"`
 }
 
 // IsSuccess 便利方法：检查是否成功

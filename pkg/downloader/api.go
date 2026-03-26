@@ -37,34 +37,34 @@ type ProgressFunc func(downloaded, total int64)
 type ErrorFunc func(err error)
 
 type DownloadResult struct {
-	Path string
-	Size int64
+	Path string `json:"path,omitempty"`
+	Size int64  `json:"size,omitempty"`
 }
 
 type Opts struct {
-	Dest string
+	Dest string `json:"dest,omitempty"`
 
 	// Proxy 指定下载使用的代理地址，支持 http://、https://、socks5:// 格式。
 	// 特殊值 "env" 表示自动读取系统环境变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）。
-	Proxy string
+	Proxy string `json:"proxy,omitempty"`
 
 	// Timeout 为单次 HTTP 请求（含 HEAD probe）的超时时间。0 表示不限制。
-	Timeout time.Duration
+	Timeout time.Duration `json:"timeout,omitempty"`
 	// Retry 为下载失败时的最大重试次数（不含首次），0 表示不重试。
-	Retry int
+	Retry int `json:"retry,omitempty"`
 	// RetryInterval 为相邻两次重试之间的等待时间，默认 1s。
-	RetryInterval time.Duration
+	RetryInterval time.Duration `json:"retry_interval,omitempty"`
 
 	// Overwrite 控制目标文件已存在时的行为，默认为 false（跳过）。
 	// 设为 true 时，无论是否已下载完成，均删除旧文件并重新下载。
 	// 当 Overwrite 为 false 且文件已完整存在（且 R 为 false 或服务端不支持续传）时直接跳过。
-	Overwrite bool
+	Overwrite bool `json:"overwrite,omitempty"`
 
-	Concurrency int // 下载并发数，默认为 1，表示单线程下载。大于 1 时启用分块下载。
+	Concurrency int `json:"concurrency,omitempty"` // 下载并发数，默认为 1，表示单线程下载。大于 1 时启用分块下载。
 	// ChunkSize 为分块下载时每个分片的字节数，0 表示使用默认值（1MB）。
-	ChunkSize int64
+	ChunkSize int64 `json:"chunk_size,omitempty"`
 
-	savePath string // 内部使用的实际保存路径，GetSavePath 计算后缓存
+	savePath string `json:"save_path,omitempty"` // 内部使用的实际保存路径，GetSavePath 计算后缓存
 }
 
 type Task struct {

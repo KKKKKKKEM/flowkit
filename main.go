@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
@@ -25,8 +26,7 @@ func main() {
 	extractorStage.Mount(&pexels.APIParser{})
 
 	// 注册 stage
-	pipeline.Register(downloadStage)
-	pipeline.Register(extractorStage)
+	pipeline.Register(downloadStage, extractorStage)
 
 	task := &extractors.Task{
 		Opts: &extractors.Opts{},
@@ -40,9 +40,14 @@ func main() {
 		log.Fatalf("Pipeline failed: %v", err)
 	}
 
+	bytes, err := json.Marshal(report.StageResults)
+	if err != nil {
+		return
+	}
+
 	log.Printf("Pipeline %s completed in %dms, success=%v", report.Mode, report.DurationMs, report.Success)
 	log.Printf("Execution order: %v", report.StageOrder)
-	log.Printf("Execution result: %v", report.StageResults)
+	log.Printf("Execution result: %v", string(bytes))
 
 	//
 	//

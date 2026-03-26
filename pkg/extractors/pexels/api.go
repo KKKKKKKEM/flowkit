@@ -54,7 +54,7 @@ func (p *APIParser) ParseImageAPI(ctx context.Context, task *extractors.Task, op
 	alt := gjson.GetBytes(body, "alt").String()
 	width := gjson.GetBytes(body, "width").Int()
 	height := gjson.GetBytes(body, "height").Int()
-	url := gjson.GetBytes(body, "url").Int()
+	url := gjson.GetBytes(body, "url").String()
 	id := gjson.GetBytes(body, "id").Int()
 
 	var items []extractors.ParseItem

@@ -23,12 +23,12 @@ type RunOptions struct {
 
 // RunReport 是 Pipeline 执行的完整报告
 type RunReport struct {
-	Mode         PipelineMode
-	Success      bool
-	TraceID      string
-	StageOrder   []string               // 执行顺序
-	StageResults map[string]StageResult // stage 名 -> result
-	DurationMs   int64
+	Mode         PipelineMode           `json:"mode,omitempty"`
+	Success      bool                   `json:"success,omitempty"`
+	TraceID      string                 `json:"trace_id,omitempty"`
+	StageOrder   []string               `json:"stage_order,omitempty"`   // 执行顺序
+	StageResults map[string]StageResult `json:"stage_results,omitempty"` // stage 名 -> result
+	DurationMs   int64                  `json:"duration_ms,omitempty"`
 }
 
 // Pipeline 是框架的执行引擎

@@ -27,23 +27,16 @@ func WithProgressBar() Option {
 	return func(o *stageOptions) { o.progressBar = true }
 }
 
-func WithProxy(proxyURL string) Option {
-	return func(o *stageOptions) { o.fallback.Proxy = proxyURL }
-}
-
-func WithEnvProxy() Option {
-	return func(o *stageOptions) { o.fallback.Proxy = "env" }
-}
-
-func WithTimeout(d time.Duration) Option {
-	return func(o *stageOptions) { o.fallback.Timeout = d }
-}
-
-func WithRetry(maxAttempts int, interval time.Duration) Option {
+func WithFallback(opts *downloader.Opts) Option {
 	return func(o *stageOptions) {
-		o.fallback.Retry = maxAttempts
-		o.fallback.RetryInterval = interval
+		if opts != nil {
+			o.fallback = *opts
+		}
 	}
+}
+
+func WithFallbackHeaders(headers map[string]string) Option {
+	return func(o *stageOptions) { o.headers = headers }
 }
 
 func WithInputKey(inputKey string) Option {
@@ -52,19 +45,6 @@ func WithInputKey(inputKey string) Option {
 
 func WithNextStage(stageName string) Option {
 	return func(o *stageOptions) { o.nextStageName = stageName }
-}
-
-func WithHeaders(headers map[string]string) Option {
-	return func(o *stageOptions) { o.headers = headers }
-}
-
-func WithHeader(key, value string) Option {
-	return func(o *stageOptions) {
-		if o.headers == nil {
-			o.headers = make(map[string]string)
-		}
-		o.headers[key] = value
-	}
 }
 
 func getSharedProgress() *mpb.Progress {
