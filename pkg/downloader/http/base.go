@@ -336,7 +336,7 @@ func (d *BaseHTTPDownloader) downloadSegment(ctx context.Context, task *download
 	}
 
 	offset := resumeOffset
-	buf := make([]byte, 64*1024)
+	buf := make([]byte, defaultChunkSize)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()

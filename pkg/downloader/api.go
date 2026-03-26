@@ -82,11 +82,11 @@ type Task struct {
 
 // NewTaskFromURI 根据 URI 快速构造下载任务。
 // opts 为空时会使用默认配置；headers 可选。
-func NewTaskFromURI(ctx context.Context, uri string, opts *Opts, headers map[string]string) (*Task, error) {
+func NewTaskFromURI(uri string, opts *Opts, headers map[string]string) (*Task, error) {
 	if strings.TrimSpace(uri) == "" {
 		return nil, fmt.Errorf("uri is empty")
 	}
-	req, err := NewRequest(ctx, http.MethodGet, uri, headers)
+	req, err := NewRequest(http.MethodGet, uri, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -210,8 +210,8 @@ type Downloader interface {
 	Name() string
 }
 
-func NewRequest(ctx context.Context, method, rawURL string, headers map[string]string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
+func NewRequest(method, rawURL string, headers map[string]string) (*http.Request, error) {
+	req, err := http.NewRequest(method, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}

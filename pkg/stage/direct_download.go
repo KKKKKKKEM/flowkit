@@ -217,7 +217,7 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	}
 }
 
-// NewDirectDownloadStage 创建一个 DirectDownloadStage，可选地指定默认 Task
+// NewDirectDownloadStage 创建一个 DirectDownloadStage
 func NewDirectDownloadStage(name string, options ...Option) *DirectDownloadStage {
 	s := &DirectDownloadStage{
 		stageName: name,

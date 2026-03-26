@@ -24,7 +24,6 @@ func main() {
 	pipeline.Register(downloadStage)
 
 	task1, err := downloader.NewTaskFromURI(
-		context.Background(),
 		"https://videos.pexels.com/video-files/3929620/3929620-hd_1920_1080_30fps.mp4",
 		&downloader.Opts{
 			Timeout:       30 * time.Second,
