@@ -12,7 +12,6 @@ type SharedState map[string]any
 type RunContext struct {
 	ctx       context.Context
 	TraceID   string
-	Inputs    SharedState // 运行时输入（初始化时由调用者设置）
 	Values    SharedState // 执行过程中的中间产物与共享数据
 	Tags      map[string]string
 	StartedAt time.Time
@@ -48,7 +47,6 @@ func NewRunContext(ctx context.Context, traceID string) *RunContext {
 	return &RunContext{
 		ctx:       ctx,
 		TraceID:   traceID,
-		Inputs:    make(SharedState),
 		Values:    make(SharedState),
 		Tags:      make(map[string]string),
 		StartedAt: time.Now(),

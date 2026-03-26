@@ -63,6 +63,13 @@ type Opts struct {
 	Concurrency int // 下载并发数，默认为 1，表示单线程下载。大于 1 时启用分块下载。
 	// ChunkSize 为分块下载时每个分片的字节数，0 表示使用默认值（1MB）。
 	ChunkSize int64
+
+	savePath string // 内部使用的实际保存路径，GetSavePath 计算后缓存
+}
+
+type Task struct {
+	*Opts
+	Request *http.Request
 	// 进度回调, 下载进度
 	OnProgress ProgressFunc
 	// 完成回调, 下载成功后调用
@@ -71,13 +78,6 @@ type Opts struct {
 	OnError ErrorFunc
 	// Meta 可选的元信息字段，供 Downloader 使用
 	Meta map[string]any
-
-	savePath string // 内部使用的实际保存路径，GetSavePath 计算后缓存
-}
-
-type Task struct {
-	*Opts
-	Request *http.Request
 }
 
 // NewTaskFromURI 根据 URI 快速构造下载任务。

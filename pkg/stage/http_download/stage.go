@@ -1,4 +1,4 @@
-package stage
+package http_download
 
 import (
 	"fmt"
@@ -11,67 +11,6 @@ import (
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
-
-var (
-	sharedProgressOnce sync.Once
-	sharedProgress     *mpb.Progress
-)
-
-func getSharedProgress() *mpb.Progress {
-	sharedProgressOnce.Do(func() {
-		sharedProgress = mpb.New(
-			mpb.WithRefreshRate(120 * time.Millisecond),
-		)
-	})
-	return sharedProgress
-}
-
-type stageOptions struct {
-	progressBar   bool
-	proxy         string
-	timeout       time.Duration
-	retry         int
-	retryInterval time.Duration
-	inputKey      string // 从 rc.Inputs 中读取 Task 的 key，默认为 "task"
-	nextStageName string
-}
-
-type Option func(*stageOptions)
-
-func WithProgressBar() Option {
-	return func(o *stageOptions) { o.progressBar = true }
-}
-
-func WithProxy(proxyURL string) Option {
-	return func(o *stageOptions) { o.proxy = proxyURL }
-}
-
-func WithEnvProxy() Option {
-	return func(o *stageOptions) { o.proxy = "env" }
-}
-
-func WithTimeout(d time.Duration) Option {
-	return func(o *stageOptions) { o.timeout = d }
-}
-
-func WithRetry(maxAttempts int, interval time.Duration) Option {
-	return func(o *stageOptions) {
-		o.retry = maxAttempts
-		o.retryInterval = interval
-	}
-}
-
-func WithInputKey(inputKey string) Option {
-	return func(o *stageOptions) {
-		o.inputKey = inputKey
-	}
-}
-
-func WithNextStage(stageName string) Option {
-	return func(o *stageOptions) {
-		o.nextStageName = stageName
-	}
-}
 
 type DirectDownloadStage struct {
 	stageName string // stage 唯一标识符
@@ -91,17 +30,9 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 		inputKey = "task"
 	}
 
-	if val, ok := rc.Inputs[inputKey]; ok {
+	if val, ok := rc.Values[inputKey]; ok {
 		if t, ok := val.(*downloader.Task); ok {
 			task = t
-		}
-	}
-
-	if task == nil {
-		if val, ok := rc.Values[inputKey]; ok {
-			if t, ok := val.(*downloader.Task); ok {
-				task = t
-			}
 		}
 	}
 
@@ -128,6 +59,18 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	}
 	if task.RetryInterval == 0 && o.retryInterval > 0 {
 		task.RetryInterval = o.retryInterval
+	}
+
+	// 合并 header
+	if o.headers != nil {
+		if task.Request.Header == nil {
+			task.Request.Header = make(map[string][]string)
+		}
+		for k, v := range o.headers {
+			if _, exists := task.Request.Header[k]; !exists {
+				task.Request.Header[k] = []string{v}
+			}
+		}
 	}
 
 	if o.progressBar {
@@ -171,10 +114,15 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 				bar.SetTotal(total, false)
 			}
 
-			delta := downloaded - lastBytes
-			if delta > 0 {
-				bar.EwmaIncrInt64(delta, 120*time.Millisecond)
+			if lastBytes == 0 {
 				lastBytes = downloaded
+				bar.SetCurrent(downloaded)
+			} else {
+				delta := downloaded - lastBytes
+				if delta > 0 {
+					bar.EwmaIncrInt64(delta, 120*time.Millisecond)
+					lastBytes = downloaded
+				}
 			}
 
 			if origProgress != nil {
@@ -234,8 +182,8 @@ func (s *DirectDownloadStage) Run(rc *core.RunContext) core.StageResult {
 	}
 }
 
-// NewDirectDownloadStage 创建一个 DirectDownloadStage
-func NewDirectDownloadStage(name string, options ...Option) *DirectDownloadStage {
+// NewStage 创建一个 DirectDownloadStage
+func NewStage(name string, options ...Option) *DirectDownloadStage {
 	s := &DirectDownloadStage{
 		stageName: name,
 	}
