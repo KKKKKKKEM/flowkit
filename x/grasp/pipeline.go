@@ -27,7 +27,7 @@ type Pipeline struct {
 	downloader       *download.DirectDownloadStage
 	defaultSelector  SelectFunc
 	defaultTransform TransformFunc
-	reporter         ProgressReporter
+	reporter         core.ProgressReporter
 	plugin           core.InteractionPlugin
 }
 
@@ -232,9 +232,9 @@ func (p *Pipeline) buildDownloadTasks(rc *core.RunContext, items []extract.Parse
 	transformFn := task.resolveTransform(p.defaultTransform)
 	baseOpts := task.toDownloadOpts()
 
-	reporter := p.reporter
-	if r, ok := rc.Values["__reporter__"].(ProgressReporter); ok {
-		reporter = r
+	reporter := rc.Reporter()
+	if reporter == nil {
+		reporter = p.reporter
 	}
 
 	tasks := make([]*download.Task, 0, len(items))
@@ -244,7 +244,12 @@ func (p *Pipeline) buildDownloadTasks(rc *core.RunContext, items []extract.Parse
 			return nil, fmt.Errorf("transform %q: %w", item.URI, err)
 		}
 		if reporter != nil {
-			reporter.Track(t)
+			key := item.URI
+			if item.Name != "" {
+				key = item.Name
+			}
+			tracker := reporter.Track(key, 0)
+			bridgeDownloadTask(t, tracker)
 		}
 		tasks = append(tasks, t)
 	}

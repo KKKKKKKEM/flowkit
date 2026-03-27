@@ -6,34 +6,28 @@ import (
 
 	"github.com/KKKKKKKEM/flowkit/builtin/download"
 	"github.com/KKKKKKKEM/flowkit/builtin/serve"
+	"github.com/KKKKKKKEM/flowkit/core"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
 )
 
-type ProgressReporter interface {
-	Track(task *download.Task)
-	Wait()
-}
+var _ core.ProgressReporter = (*MpbReporter)(nil)
+var _ core.ProgressReporter = (*SSEReporter)(nil)
 
 type MpbReporter struct {
 	p *mpb.Progress
 }
 
 func NewMpbReporter() *MpbReporter {
-	progress := mpb.New(mpb.WithRefreshRate(120 * time.Millisecond))
-
-	return &MpbReporter{p: progress}
+	return &MpbReporter{
+		p: mpb.New(mpb.WithRefreshRate(120 * time.Millisecond)),
+	}
 }
 
-func (r *MpbReporter) Track(task *download.Task) {
-	savePath, err := task.GetSavePath()
-	if err != nil {
-		savePath = task.Request.URL.String()
-	}
-
-	bar := r.p.AddBar(0,
+func (r *MpbReporter) Track(key string, total int64) core.ProgressTracker {
+	bar := r.p.AddBar(total,
 		mpb.PrependDecorators(
-			decor.Name(savePath+" ", decor.WCSyncWidth),
+			decor.Name(key+" ", decor.WCSyncWidth),
 			decor.Counters(decor.SizeB1024(0), "% .2f / % .2f"),
 		),
 		mpb.AppendDecorators(
@@ -45,58 +39,44 @@ func (r *MpbReporter) Track(task *download.Task) {
 			decor.EwmaSpeed(decor.SizeB1024(0), "% .2f", 30, decor.WCSyncWidth),
 		),
 	)
-
-	var (
-		mu         sync.Mutex
-		knownTotal int64
-		lastBytes  int64
-	)
-
-	origProgress := task.OnProgress
-	task.OnProgress = func(downloaded, total int64) {
-		mu.Lock()
-		defer mu.Unlock()
-		if total > 0 && total != knownTotal {
-			knownTotal = total
-			bar.SetTotal(total, false)
-		}
-		if lastBytes == 0 {
-			lastBytes = downloaded
-			bar.SetCurrent(downloaded)
-		} else if delta := downloaded - lastBytes; delta > 0 {
-			bar.EwmaIncrInt64(delta, 120*time.Millisecond)
-			lastBytes = downloaded
-		}
-		if origProgress != nil {
-			origProgress(downloaded, total)
-		}
-	}
-
-	origComplete := task.OnComplete
-	task.OnComplete = func(result *download.Result) {
-		mu.Lock()
-		bar.SetTotal(-1, true)
-		mu.Unlock()
-		if origComplete != nil {
-			origComplete(result)
-		}
-	}
+	return &mpbTracker{bar: bar}
 }
 
 func (r *MpbReporter) Wait() {
 	r.p.Wait()
 }
 
+type mpbTracker struct {
+	mu        sync.Mutex
+	bar       *mpb.Bar
+	lastBytes int64
+}
+
+func (t *mpbTracker) Update(downloaded int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lastBytes == 0 {
+		t.bar.SetCurrent(downloaded)
+	} else if delta := downloaded - t.lastBytes; delta > 0 {
+		t.bar.EwmaIncrInt64(delta, 120*time.Millisecond)
+	}
+	t.lastBytes = downloaded
+}
+
+func (t *mpbTracker) Done() {
+	t.mu.Lock()
+	t.bar.SetTotal(-1, true)
+	t.mu.Unlock()
+}
+
 type DownloadProgressData struct {
-	URL        string `json:"url"`
+	Key        string `json:"key"`
 	Downloaded int64  `json:"downloaded"`
 	Total      int64  `json:"total"`
 }
 
-type DownloadCompleteData struct {
-	URL  string `json:"url"`
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+type DownloadDoneData struct {
+	Key string `json:"key"`
 }
 
 type SSEReporter struct {
@@ -107,16 +87,30 @@ func NewSSEReporter(sess *serve.SSESession) *SSEReporter {
 	return &SSEReporter{sess: sess}
 }
 
-func (r *SSEReporter) Track(task *download.Task) {
-	url := task.Request.URL.String()
+func (r *SSEReporter) Track(key string, total int64) core.ProgressTracker {
+	r.sess.EmitProgress(DownloadProgressData{Key: key, Downloaded: 0, Total: total})
+	return &sseTracker{sess: r.sess, key: key}
+}
 
+func (r *SSEReporter) Wait() {}
+
+type sseTracker struct {
+	sess *serve.SSESession
+	key  string
+}
+
+func (t *sseTracker) Update(downloaded int64) {
+	t.sess.EmitProgress(DownloadProgressData{Key: t.key, Downloaded: downloaded})
+}
+
+func (t *sseTracker) Done() {
+	t.sess.EmitProgress(DownloadDoneData{Key: t.key})
+}
+
+func bridgeDownloadTask(task *download.Task, tracker core.ProgressTracker) {
 	origProgress := task.OnProgress
 	task.OnProgress = func(downloaded, total int64) {
-		r.sess.EmitProgress(DownloadProgressData{
-			URL:        url,
-			Downloaded: downloaded,
-			Total:      total,
-		})
+		tracker.Update(downloaded)
 		if origProgress != nil {
 			origProgress(downloaded, total)
 		}
@@ -124,15 +118,9 @@ func (r *SSEReporter) Track(task *download.Task) {
 
 	origComplete := task.OnComplete
 	task.OnComplete = func(result *download.Result) {
-		r.sess.EmitProgress(DownloadCompleteData{
-			URL:  url,
-			Path: result.Path,
-			Size: result.Size,
-		})
+		tracker.Done()
 		if origComplete != nil {
 			origComplete(result)
 		}
 	}
 }
-
-func (r *SSEReporter) Wait() {}

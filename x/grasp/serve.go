@@ -18,7 +18,7 @@ func (p *Pipeline) GinRegister(r gin.IRouter) gin.IRouter {
 			return &task, nil
 		},
 		func(sess *serve.SSESession, rc *core.RunContext, _ *Task) {
-			rc.WithValue("__reporter__", NewSSEReporter(sess))
+			rc.WithReporter(NewSSEReporter(sess))
 		},
 	)
 	return r

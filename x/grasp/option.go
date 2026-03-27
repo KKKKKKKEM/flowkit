@@ -32,7 +32,7 @@ func WithTransform(fn TransformFunc) Option {
 	}
 }
 
-func WithProgress(r ProgressReporter) Option {
+func WithProgress(r core.ProgressReporter) Option {
 	return func(p *Pipeline) {
 		p.reporter = r
 	}

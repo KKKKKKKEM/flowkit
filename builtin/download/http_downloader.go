@@ -6,10 +6,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Requester interface {
@@ -44,25 +47,25 @@ func (d *BaseHTTPDownloader) CanHandle(task *Task) bool {
 	return scheme == "http" || scheme == "https"
 }
 
-func (d *BaseHTTPDownloader) Probe(ctx context.Context, task *Task) (int64, bool) {
+func (d *BaseHTTPDownloader) Probe(ctx context.Context, task *Task) (int64, bool, http.Header) {
 	opts := ensureTaskOpts(task)
 	headRequest := task.Request.Clone(ctx)
 	headRequest.Method = http.MethodHead
 
 	resp, err := d.requester.Request(ctx, headRequest, opts)
 	if err != nil {
-		return -1, false
+		return -1, false, nil
 	}
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return -1, false
+		return -1, false, nil
 	}
 
 	acceptsRanges := strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes")
-	return resp.ContentLength, acceptsRanges
+	return resp.ContentLength, acceptsRanges, resp.Header
 }
 
 func (d *BaseHTTPDownloader) buildSegments(totalSize, chunkSize int64, concurrency int) []Segment {
@@ -86,14 +89,13 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *Task) (*Result,
 	}
 	_ = ensureTaskOpts(task)
 
-	dest, err := task.GetSavePath()
-	if err != nil {
+	totalSize, acceptsRanges, probeHeader := d.Probe(ctx, task)
+	if err := patchPath(task, probeHeader); err != nil {
 		return nil, err
 	}
 
+	dest := task.SavePath
 	tmp := dest + ".tmp"
-
-	totalSize, acceptsRanges := d.Probe(ctx, task)
 	chunkSize := task.ChunkSize
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkSize
@@ -140,7 +142,7 @@ func (d *BaseHTTPDownloader) Download(ctx context.Context, task *Task) (*Result,
 			ChunkSize: chunkSize,
 			Segments:  allSegments,
 		}
-		if err = task.SaveMeta(meta); err != nil {
+		if err := task.SaveMeta(meta); err != nil {
 			return nil, fmt.Errorf("create meta : %w", err)
 		}
 	}
@@ -382,4 +384,62 @@ func (d *BaseHTTPDownloader) Fetch(ctx context.Context, task *Task) (*http.Respo
 		}
 	}
 	return nil, fmt.Errorf("failed to fetch URL after %d attempts", task.Retry+1)
+}
+
+func patchPath(task *Task, h http.Header) error {
+	if task.SavePath != "" {
+		return nil
+	}
+
+	dest := strings.TrimSpace(task.Dest)
+	if dest == "" {
+		dest = "."
+	}
+
+	urlName := FilenameFromURL(task.Request.URL.String())
+	fileName := ""
+
+	if h != nil {
+		fileName = FilenameFromHeader(h)
+	}
+	if fileName == "" {
+		fileName = urlName
+	}
+	if filepath.Ext(fileName) == "" && h != nil {
+		if ext := ExtFromContentType(h.Get("Content-Type")); ext != "" {
+			fileName += ext
+		}
+	}
+	if fileName == "" {
+		fileName = uuid.NewString()
+	}
+
+	dest = filepath.Clean(dest)
+	if info, err := os.Stat(dest); err == nil {
+		if info.IsDir() {
+			task.SavePath = filepath.Join(dest, fileName)
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		task.SavePath = dest
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if IsDirPath(dest) {
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			return err
+		}
+		task.SavePath = filepath.Join(dest, fileName)
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	task.SavePath = dest
+	return nil
 }

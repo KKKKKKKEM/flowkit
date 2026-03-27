@@ -24,7 +24,7 @@ func main() {
 		grasp.WithExtractor(extractor),
 		grasp.WithDownloader(downloader),
 		grasp.WithPlugin(grasp.CLISelectPlugin{}),
-		grasp.WithProgress(reporter),
+		//grasp.WithProgress(reporter),
 	)
 
 	task := &grasp.Task{
@@ -39,6 +39,7 @@ func main() {
 	}
 
 	rc := core.NewRunContext(context.Background(), "pexels-example")
+	rc.WithReporter(reporter)
 	rc.WithValue("task", task)
 
 	runReport, err := p.Run(rc, "grasp")

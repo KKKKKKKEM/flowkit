@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -97,56 +96,6 @@ func NewTaskFromURI(uri string, opts *Opts, headers map[string]string) (*Task, e
 	}, nil
 }
 
-func (t *Task) GetSavePath() (string, error) {
-
-	if t.SavePath != "" {
-		return t.SavePath, nil
-	}
-
-	fileName := FilenameFromURL(t.Request.URL.String())
-	if strings.TrimSpace(t.Dest) == "" {
-		t.Dest = "."
-	}
-
-	dest := t.Dest
-
-	dest = filepath.Clean(dest)
-	if info, err := os.Stat(dest); err == nil {
-		if info.IsDir() {
-			if err := os.MkdirAll(dest, 0o755); err != nil {
-				return "", err
-			}
-			t.SavePath = filepath.Join(dest, fileName)
-			return t.SavePath, nil
-		}
-
-		// 已存在的文件路径
-		parent := filepath.Dir(dest)
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return "", err
-		}
-		return dest, nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	if IsDirPath(dest) {
-		if err := os.MkdirAll(dest, 0o755); err != nil {
-			return "", err
-		}
-		t.SavePath = filepath.Join(dest, fileName)
-		return t.SavePath, nil
-	}
-
-	parent := filepath.Dir(dest)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", err
-	}
-
-	t.SavePath = dest
-	return t.SavePath, nil
-}
-
 func (t *Task) Interval() time.Duration {
 	if t.RetryInterval > 0 {
 		return t.RetryInterval
@@ -155,11 +104,10 @@ func (t *Task) Interval() time.Duration {
 }
 
 func (t *Task) MetaPath() (string, error) {
-	realDest, err := t.GetSavePath()
-	if err != nil {
-		return "", err
+	if t.SavePath == "" {
+		return "", fmt.Errorf("save path not resolved")
 	}
-	return realDest + ".meta", nil
+	return t.SavePath + ".meta", nil
 }
 
 func (t *Task) LoadMeta() (*Meta, error) {
