@@ -1,4 +1,4 @@
-module github.com/KKKKKKKEM/grasp
+module github.com/KKKKKKKEM/flowkit
 
 go 1.24.0
 
