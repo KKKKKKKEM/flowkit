@@ -1,189 +1,157 @@
 package serve
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"sync"
-	"time"
+	"net/http"
+	"strconv"
 
 	"github.com/KKKKKKKEM/flowkit/core"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
-
-type SSEEventType string
 
 const (
-	SSEEventSession SSEEventType = "session"
-	SSEProgress     SSEEventType = "progress"
-	SSEPending      SSEEventType = "pending"
-	SSEDone         SSEEventType = "done"
-	SSEError        SSEEventType = "error"
+	sessionIDKey   = "SESSION-ID"
+	lastEventIDKey = "Last-Event-ID"
 )
 
-type SSEEvent struct {
-	Seq  int64        `json:"seq"`
-	Type SSEEventType `json:"type"`
-	Data any          `json:"data"`
+type answerRequest struct {
+	InteractionID string                 `json:"interaction_id"`
+	Result        core.InteractionResult `json:"result"`
 }
 
-type PendingEventData struct {
-	InteractionID string           `json:"interaction_id"`
-	Interaction   core.Interaction `json:"interaction"`
+type SSEConfig[Req, Resp any] struct {
+	App      core.App[Req, Resp]
+	Store    *SSESessionStore
+	BuildReq func(*gin.Context) (Req, error)
+	OnStart  func(*SSESession, *core.RunContext, Req)
 }
 
-type sseClient struct {
-	ch     chan SSEEvent
-	closed chan struct{}
-}
-
-type pendingAnswer struct {
-	result core.InteractionResult
-	err    error
-}
-
-type SSESession struct {
-	mu        sync.Mutex
-	seq       int64
-	buf       []SSEEvent
-	client    *sseClient
-	answerChs map[string]chan pendingAnswer
-	done      bool
-}
-
-func newSSESession() *SSESession {
-	return &SSESession{
-		answerChs: make(map[string]chan pendingAnswer),
+func SSE[Req, Resp any](r gin.IRouter, path string, cfg SSEConfig[Req, Resp]) {
+	store := cfg.Store
+	if store == nil {
+		store = DefaultSSESessionStore()
 	}
-}
-
-func (s *SSESession) emit(eventType SSEEventType, data any) SSEEvent {
-	s.mu.Lock()
-	s.seq++
-	e := SSEEvent{Seq: s.seq, Type: eventType, Data: data}
-	s.buf = append(s.buf, e)
-	client := s.client
-	s.mu.Unlock()
-
-	if client != nil {
-		select {
-		case client.ch <- e:
-		case <-client.closed:
-		}
-	}
-	return e
-}
-
-func (s *SSESession) subscribe(lastSeq int64) (<-chan SSEEvent, func()) {
-	ch := make(chan SSEEvent, 64)
-	closed := make(chan struct{})
-	c := &sseClient{ch: ch, closed: closed}
-
-	s.mu.Lock()
-	if s.client != nil {
-		close(s.client.closed)
-	}
-	s.client = c
-	replay := make([]SSEEvent, 0)
-	for _, e := range s.buf {
-		if e.Seq > lastSeq {
-			replay = append(replay, e)
-		}
-	}
-	s.mu.Unlock()
-
-	for _, e := range replay {
-		ch <- e
+	buildReq := cfg.BuildReq
+	if buildReq == nil {
+		buildReq = defaultBuildReq[Req]
 	}
 
-	return ch, func() {
-		s.mu.Lock()
-		if s.client == c {
-			s.client = nil
-		}
-		s.mu.Unlock()
-		close(closed)
-	}
-}
-
-func (s *SSESession) EmitProgress(data any) {
-	s.emit(SSEProgress, data)
-}
-
-func (s *SSESession) suspend(interactionID string, i core.Interaction) (core.InteractionResult, error) {
-	ch := make(chan pendingAnswer, 1)
-	s.mu.Lock()
-	s.answerChs[interactionID] = ch
-	s.mu.Unlock()
-
-	s.emit(SSEPending, PendingEventData{InteractionID: interactionID, Interaction: i})
-
-	ans := <-ch
-
-	s.mu.Lock()
-	delete(s.answerChs, interactionID)
-	s.mu.Unlock()
-
-	return ans.result, ans.err
-}
-
-func (s *SSESession) answer(interactionID string, result core.InteractionResult) error {
-	s.mu.Lock()
-	ch, ok := s.answerChs[interactionID]
-	s.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("interaction %q not found or already answered", interactionID)
-	}
-	ch <- pendingAnswer{result: result}
-	return nil
-}
-
-type SSESessionStore struct {
-	mu       sync.Mutex
-	sessions map[string]*SSESession
-	ttl      time.Duration
-}
-
-func NewSSESessionStore(ttl time.Duration) *SSESessionStore {
-	s := &SSESessionStore{
-		sessions: make(map[string]*SSESession),
-		ttl:      ttl,
-	}
-	go s.gc()
-	return s
-}
-
-func (s *SSESessionStore) Create(sessionID string) *SSESession {
-	sess := newSSESession()
-	s.mu.Lock()
-	s.sessions[sessionID] = sess
-	s.mu.Unlock()
-	return sess
-}
-
-func (s *SSESessionStore) Get(sessionID string) (*SSESession, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[sessionID]
-	return sess, ok
-}
-
-func (s *SSESessionStore) Delete(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, sessionID)
-}
-
-func (s *SSESessionStore) gc() {
-	ticker := time.NewTicker(s.ttl)
-	for range ticker.C {
-		s.mu.Lock()
-		for id, sess := range s.sessions {
-			sess.mu.Lock()
-			done := sess.done
-			sess.mu.Unlock()
-			if done {
-				delete(s.sessions, id)
+	r.POST(path, func(c *gin.Context) {
+		lastSeq := int64(0)
+		if v := c.GetHeader(lastEventIDKey); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				lastSeq = n
 			}
 		}
-		s.mu.Unlock()
-	}
+
+		sessionID := c.GetHeader(sessionIDKey)
+
+		var (
+			sess   *SSESession
+			exists bool
+		)
+		if sessionID != "" {
+			sess, exists = store.Get(sessionID)
+		}
+		if sess == nil {
+			sessionID = uuid.NewString()
+			sess = store.Create(sessionID)
+			exists = false
+		}
+
+		ch, unsub := sess.subscribe(lastSeq)
+		defer unsub()
+
+		if !exists {
+			req, err := buildReq(c)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			go func() {
+				rc := core.NewRunContext(context.Background(), sessionID)
+				rc.WithSuspend(func(i core.Interaction) (core.InteractionResult, error) {
+					return sess.suspend(uuid.NewString(), i)
+				})
+
+				if cfg.OnStart != nil {
+					cfg.OnStart(sess, rc, req)
+				}
+
+				resp, err := cfg.App.Invoke(rc, req)
+
+				sess.mu.Lock()
+				sess.done = true
+				sess.mu.Unlock()
+
+				if err != nil {
+					sess.emit(SSEError, gin.H{"message": err.Error()})
+				} else {
+					sess.emit(SSEDone, resp)
+				}
+			}()
+		}
+
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+
+		writeSSEEvent(c, SSEEvent{Seq: 0, Type: SSEEventSession, Data: gin.H{"session_id": sessionID}})
+		c.Writer.Flush()
+
+		ctx := c.Request.Context()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e, ok := <-ch:
+				if !ok {
+					return
+				}
+				writeSSEEvent(c, e)
+				c.Writer.Flush()
+				if e.Type == SSEDone || e.Type == SSEError {
+					store.Delete(sessionID)
+					return
+				}
+			}
+		}
+	})
+
+	r.POST(path+"/answer", func(c *gin.Context) {
+		sessionID := c.GetHeader(sessionIDKey)
+		if sessionID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Session-ID header required"})
+			return
+		}
+
+		sess, ok := store.Get(sessionID)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+
+		var body answerRequest
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		if err := sess.answer(body.InteractionID, body.Result); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+}
+
+func writeSSEEvent(c *gin.Context, e SSEEvent) {
+	b, _ := json.Marshal(e.Data)
+	fmt.Fprintf(c.Writer, "id: %d\nevent: %s\ndata: %s\n\n", e.Seq, e.Type, b)
 }
