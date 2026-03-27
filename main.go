@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/KKKKKKKEM/grasp/pkg/core"
+	"github.com/KKKKKKKEM/grasp/pkg/core/pipeline"
 	"github.com/KKKKKKKEM/grasp/pkg/extract"
 	"github.com/KKKKKKKEM/grasp/pkg/extract/pexels"
 	extractStage "github.com/KKKKKKKEM/grasp/pkg/stage/extract"
@@ -14,7 +15,7 @@ import (
 
 func main() {
 	// 创建 Pipeline
-	pipeline := core.NewFSMPipeline()
+	fsmPipeline := pipeline.NewFSMPipeline()
 
 	// 创建 DirectDownloadStage（不指定默认 Task，运行时从 rc.Inputs 读取）
 	downloadStage := http_download.NewStage(
@@ -26,7 +27,7 @@ func main() {
 	extractorStage.Mount(&pexels.APIParser{})
 
 	// 注册 stage
-	pipeline.Register(downloadStage, extractorStage)
+	fsmPipeline.Register(downloadStage, extractorStage)
 
 	task := &extract.Task{
 		Opts: &extract.Opts{},
@@ -35,7 +36,7 @@ func main() {
 
 	rc := core.NewRunContext(context.Background(), "trace-001")
 	rc.WithValue("task", task)
-	report, err := pipeline.Run(rc, "extractor")
+	report, err := fsmPipeline.Run(rc, "extractor")
 	if err != nil {
 		log.Fatalf("Pipeline failed: %v", err)
 	}
@@ -70,7 +71,7 @@ func main() {
 	//rc1 := core.NewRunContext(context.Background(), "trace-001")
 	//rc1.Inputs["task"] = task1 // ✨ 运行时输入
 	//
-	//report1, err := pipeline.Run(rc1, "download")
+	//report1, err := fsmPipeline.Run(rc1, "download")
 	//if err != nil {
 	//	log.Fatalf("Pipeline failed: %v", err)
 	//}
