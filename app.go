@@ -54,6 +54,7 @@ type cliConfig[Req, Resp any] struct {
 	interactionPlugin core.InteractionPlugin
 	onResult          func(Resp)
 	onError           func(error)
+	serveOpts         []ServeOption[Req, Resp]
 }
 
 type CLIOption[Req, Resp any] func(*cliConfig[Req, Resp])
@@ -76,6 +77,10 @@ func WithOnResult[Req, Resp any](fn func(Resp)) CLIOption[Req, Resp] {
 
 func WithOnError[Req, Resp any](fn func(error)) CLIOption[Req, Resp] {
 	return func(c *cliConfig[Req, Resp]) { c.onError = fn }
+}
+
+func WithServeOpts[Req, Resp any](opts ...ServeOption[Req, Resp]) CLIOption[Req, Resp] {
+	return func(c *cliConfig[Req, Resp]) { c.serveOpts = append(c.serveOpts, opts...) }
 }
 
 type App[Req, Resp any] struct {
@@ -117,6 +122,7 @@ func (a *App[Req, Resp]) CLI(opts ...CLIOption[Req, Resp]) error {
 	return cli.Run(cli.Config[Req, Resp]{
 		App:               core.AppFunc[Req, Resp](a.invoke),
 		Builder:           cfg.builder,
+		Serve:             func(addr string) error { return a.Serve(addr, cfg.serveOpts...) },
 		TrackerProvider:   cfg.trackerProvider,
 		InteractionPlugin: cfg.interactionPlugin,
 		OnResult:          cfg.onResult,

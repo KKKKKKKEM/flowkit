@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 
@@ -17,6 +18,7 @@ func Func[Req, Resp any](fn func(*core.Context, Req) (Resp, error)) core.App[Req
 type Config[Req, Resp any] struct {
 	App               core.App[Req, Resp]
 	Builder           func(args []string) (Req, error)
+	Serve             func(addr string) error
 	OnResult          func(resp Resp)
 	OnError           func(err error)
 	TrackerProvider   core.TrackerProvider
@@ -28,7 +30,7 @@ func Run[Req, Resp any](cfg Config[Req, Resp]) error {
 	if onResult == nil {
 		onResult = func(resp Resp) {
 			enc := json.NewEncoder(os.Stdout)
-			//enc.SetIndent("", "  ")
+			// enc.SetIndent("", "  ")
 			_ = enc.Encode(resp)
 		}
 	}
@@ -38,6 +40,16 @@ func Run[Req, Resp any](cfg Config[Req, Resp]) error {
 		onError = func(err error) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
+		}
+	}
+
+	if cfg.Serve != nil {
+		fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+		addr := fs.String("serve", "", "")
+		fs.Usage = func() {}
+		_ = fs.Parse(os.Args[1:])
+		if *addr != "" {
+			return cfg.Serve(*addr)
 		}
 	}
 
