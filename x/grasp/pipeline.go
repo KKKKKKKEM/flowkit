@@ -7,9 +7,11 @@ import (
 
 	"github.com/KKKKKKKEM/flowkit/core"
 	"github.com/KKKKKKKEM/flowkit/pipeline"
+	"github.com/KKKKKKKEM/flowkit/server"
 	"github.com/KKKKKKKEM/flowkit/x/download"
 	"github.com/KKKKKKKEM/flowkit/x/extract"
 	"github.com/KKKKKKKEM/flowkit/x/grasp/sites/pexels"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -340,6 +342,14 @@ func bridgeDownloadTask(task *download.Task, tracker core.Tracker) {
 			origComplete(result)
 		}
 	}
+}
+
+func (p *Pipeline) Serve(addr string) error {
+	engine := gin.Default()
+	server.SSE(engine, "/grasp", server.Config[*Task, *Report]{
+		App: server.Func(p.Invoke),
+	})
+	return engine.Run(addr)
 }
 
 func NewPipeline(opts ...Option) *Pipeline {
