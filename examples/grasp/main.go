@@ -10,6 +10,8 @@ import (
 )
 
 func main() {
+	trackerProvider := grasp.NewMPBTrackerProvider()
+
 	extractor := extract.NewStage("extractor")
 	extractor.Mount(&pexels.APIParser{})
 
@@ -18,9 +20,11 @@ func main() {
 	p := grasp.NewGraspPipeline(
 		grasp.WithExtractor(extractor),
 		grasp.WithDownloader(downloader),
+		grasp.WithPlugin(&grasp.CLIInteractionPlugin{}),
+		grasp.WithTrackerProvider(trackerProvider),
 	)
 
-	log.Println("listening on :8080")
+	p.CLI()
 	if err := p.Serve(":8080"); err != nil {
 		log.Fatal(err)
 	}
