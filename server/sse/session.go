@@ -22,13 +22,13 @@ type pendingAnswer struct {
 
 type Session struct {
 	ID        string
-	mu        sync.Mutex
+	Mu        sync.Mutex
 	seq       int64
 	buf       []Event
 	trackBuf  map[string]Event // Track 事件按 tag 只保留最新一条
 	client    *sseClient
 	answerChs map[string]chan pendingAnswer
-	done      bool
+	Done      bool
 	createdAt time.Time
 }
 
@@ -42,7 +42,7 @@ func newSSESession(sid string) *Session {
 }
 
 func (s *Session) Emit(eventType EventType, data any) Event {
-	s.mu.Lock()
+	s.Mu.Lock()
 	s.seq++
 	e := Event{Seq: s.seq, Type: eventType, Data: data}
 
@@ -56,7 +56,7 @@ func (s *Session) Emit(eventType EventType, data any) Event {
 	}
 
 	client := s.client
-	s.mu.Unlock()
+	s.Mu.Unlock()
 
 	if client != nil {
 		select {
@@ -67,10 +67,10 @@ func (s *Session) Emit(eventType EventType, data any) Event {
 	return e
 }
 
-func (s *Session) subscribe(lastSeq int64) (<-chan Event, func()) {
+func (s *Session) Subscribe(lastSeq int64) (<-chan Event, func()) {
 	closed := make(chan struct{})
 
-	s.mu.Lock()
+	s.Mu.Lock()
 	if s.client != nil {
 		close(s.client.closed)
 	}
@@ -99,13 +99,13 @@ func (s *Session) subscribe(lastSeq int64) (<-chan Event, func()) {
 	for _, e := range replay {
 		ch <- e
 	}
-	s.mu.Unlock()
+	s.Mu.Unlock()
 	return ch, func() {
-		s.mu.Lock()
+		s.Mu.Lock()
 		if s.client == c {
 			s.client = nil
 		}
-		s.mu.Unlock()
+		s.Mu.Unlock()
 		close(closed)
 	}
 }
@@ -122,25 +122,25 @@ func extractTag(data any) string {
 
 func (s *Session) suspend(interactionID string, i core.Interaction) (*core.InteractionResult, error) {
 	ch := make(chan pendingAnswer, 1)
-	s.mu.Lock()
+	s.Mu.Lock()
 	s.answerChs[interactionID] = ch
-	s.mu.Unlock()
+	s.Mu.Unlock()
 
 	s.Emit(Interact, InteractEventData{InteractionID: interactionID, Interaction: i})
 
 	ans := <-ch
 
-	s.mu.Lock()
+	s.Mu.Lock()
 	delete(s.answerChs, interactionID)
-	s.mu.Unlock()
+	s.Mu.Unlock()
 
 	return &ans.result, ans.err
 }
 
-func (s *Session) answer(interactionID string, result core.InteractionResult) error {
-	s.mu.Lock()
+func (s *Session) Answer(interactionID string, result core.InteractionResult) error {
+	s.Mu.Lock()
 	ch, ok := s.answerChs[interactionID]
-	s.mu.Unlock()
+	s.Mu.Unlock()
 
 	if !ok {
 		return fmt.Errorf("interaction %q not found or already answered", interactionID)
@@ -223,9 +223,9 @@ func (s *SessionStore) gc() {
 				continue
 			}
 
-			sess.mu.Lock()
-			expired := sess.done || time.Since(sess.createdAt) > s.timeout
-			sess.mu.Unlock()
+			sess.Mu.Lock()
+			expired := sess.Done || time.Since(sess.createdAt) > s.timeout
+			sess.Mu.Unlock()
 
 			if expired {
 				s.mu.Lock()

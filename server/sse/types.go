@@ -24,7 +24,7 @@ type Event struct {
 	Data any       `json:"data"`
 }
 
-func (e Event) write(c *gin.Context) {
+func (e Event) Write(c *gin.Context) {
 	b, _ := json.Marshal(e.Data)
 	fmt.Fprintf(c.Writer, "id: %d\nevent: %s\ndata: %s\n\n", e.Seq, e.Type, b)
 }
