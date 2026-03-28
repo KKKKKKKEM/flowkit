@@ -42,7 +42,7 @@ func SSE[Req, Resp any](r gin.IRouter, path string, cfg Config[Req, Resp]) {
 	r.POST(path+"/stream", func(c *gin.Context) {
 		var (
 			sseSession *Session
-			exists     bool
+			isNew      bool
 			lastSeq    int64
 			err        error
 		)
@@ -53,7 +53,7 @@ func SSE[Req, Resp any](r gin.IRouter, path string, cfg Config[Req, Resp]) {
 			}
 		}
 
-		sseSession, exists, err = store.GetOrCreate(c.GetHeader(sessionIDKey))
+		sseSession, isNew, err = store.GetOrCreate(c.GetHeader(sessionIDKey))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -62,27 +62,27 @@ func SSE[Req, Resp any](r gin.IRouter, path string, cfg Config[Req, Resp]) {
 		ch, unsub := sseSession.subscribe(lastSeq)
 		defer unsub()
 
-		if !exists {
+		if isNew {
 			req, err := buildReq(c)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
+			rc := core.NewContext(context.Background(), sseSession.ID)
+			if !cfg.DisableInnerTrackerProvider {
+				rc.WithTrackerProvider(NewSSETrackerProvider(sseSession))
+			}
+
+			if !cfg.DisableInnerInteractionPlugin {
+				rc.WithInteractionPlugin(NewSSEInteractionPlugin(sseSession))
+
+			}
+
+			if cfg.OnStart != nil {
+				cfg.OnStart(sseSession, rc, req)
+			}
 
 			go func() {
-				rc := core.NewContext(context.Background(), sseSession.ID)
-				if !cfg.DisableInnerTrackerProvider {
-					rc.WithTrackerProvider(NewSSETrackerProvider(sseSession))
-				}
-
-				if !cfg.DisableInnerInteractionPlugin {
-					rc.WithInteractionPlugin(NewSSEInteractionPlugin(sseSession))
-
-				}
-
-				if cfg.OnStart != nil {
-					cfg.OnStart(sseSession, rc, req)
-				}
 
 				resp, err := cfg.App.Invoke(rc, req)
 

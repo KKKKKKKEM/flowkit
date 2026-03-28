@@ -124,15 +124,15 @@ func (p *Pipeline) run(rc *core.Context, task *Task) (*Report, error) {
 }
 
 func (p *Pipeline) selectItems(rc *core.Context, task *Task, items []extract.ParseItem) ([]extract.ParseItem, error) {
-	if p.interactionPlugin != nil {
-		i := core.Interaction{Type: core.InteractionTypeSelect, Payload: items, Message: "Please select items to download"}
-		interactionPlugin := rc.InteractionPlugin()
-		if interactionPlugin == nil {
-			interactionPlugin = p.interactionPlugin
-		}
 
-		var indices []int
+	i := core.Interaction{Type: core.InteractionTypeSelect, Payload: items, Message: "Please select items to download"}
+	interactionPlugin := rc.InteractionPlugin()
+	if interactionPlugin == nil {
+		interactionPlugin = p.interactionPlugin
+	}
 
+	var indices []int
+	if interactionPlugin != nil {
 		result, err := interactionPlugin.Interact(rc, i)
 		if err != nil {
 			return nil, err
@@ -142,27 +142,27 @@ func (p *Pipeline) selectItems(rc *core.Context, task *Task, items []extract.Par
 		if err != nil {
 			return nil, err
 		}
-
 		indices, err = toIntSlice(result.Answer)
 		if err != nil {
 			return nil, fmt.Errorf("select interaction: invalid answer: %w", err)
 		}
-
-		if len(indices) == 0 {
-			return nil, fmt.Errorf("no items selected")
-		}
-
-		var selected []extract.ParseItem
-
-		for _, index := range indices {
-			selected = append(selected, items[index])
-		}
-
-		return selected, nil
+	} else {
+		return task.resolveSelector(p.defaultSelector)(rc, items)
 
 	}
 
-	return task.resolveSelector(p.defaultSelector)(rc, items)
+	if len(indices) == 0 {
+		return nil, fmt.Errorf("no items selected")
+	}
+
+	var selected []extract.ParseItem
+
+	for _, index := range indices {
+		selected = append(selected, items[index])
+	}
+
+	return selected, nil
+
 }
 
 func toIntSlice(v any) ([]int, error) {
