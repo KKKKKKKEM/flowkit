@@ -40,7 +40,22 @@ func applyFallback(task *Task, fb *Opts, headers map[string]string) {
 	if task.Opts.RetryInterval == 0 {
 		task.Opts.RetryInterval = fb.RetryInterval
 	}
+	if task.Opts.Headers == nil && fb.Headers != nil {
+		task.Opts.Headers = make(map[string]string, len(fb.Headers))
+		for k, v := range fb.Headers {
+			task.Opts.Headers[k] = v
+		}
+	} else if fb.Headers != nil {
+		for k, v := range fb.Headers {
+			if _, exists := task.Opts.Headers[k]; !exists {
+				task.Opts.Headers[k] = v
+			}
+		}
+	}
 	if headers != nil {
+		if task.Request == nil {
+			return
+		}
 		if task.Request.Header == nil {
 			task.Request.Header = make(map[string][]string)
 		}
@@ -56,7 +71,7 @@ func (s *Stage) Exec(rc *core.Context, in []*Task) (result core.TypedResult[[]*R
 	result.Next = s.opts.nextStageName
 
 	for _, task := range in {
-		applyFallback(task, &s.opts.fallback, s.opts.headers)
+		applyFallback(task, &s.opts.fallback, s.opts.fallback.Headers)
 	}
 
 	if len(in) == 1 {

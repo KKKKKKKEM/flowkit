@@ -6,8 +6,8 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/KKKKKKKEM/flowkit/x/download"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	"github.com/KKKKKKKEM/flowkit/stages/download"
+	"github.com/KKKKKKKEM/flowkit/stages/extract"
 	"github.com/tidwall/gjson"
 )
 
@@ -29,7 +29,7 @@ func (p *APIParser) Handlers() []*extract.Parser {
 	}
 }
 
-func (p *APIParser) ParseImageAPI(ctx context.Context, task *extract.Task, opts *extract.Opts) ([]extract.ParseItem, error) {
+func (p *APIParser) ParseImageAPI(ctx context.Context, task *extract.Task, opts *extract.Opts) ([]extract.Item, error) {
 
 	httpClient := &download.HttpClient{}
 	request, err := download.NewRequest("GET", task.URL, task.Headers)
@@ -56,9 +56,9 @@ func (p *APIParser) ParseImageAPI(ctx context.Context, task *extract.Task, opts 
 	url := gjson.GetBytes(body, "url").String()
 	id := gjson.GetBytes(body, "id").Int()
 
-	var items []extract.ParseItem
+	var items []extract.Item
 	gjson.GetBytes(body, "src").ForEach(func(key, value gjson.Result) bool {
-		items = append(items, extract.ParseItem{
+		items = append(items, extract.Item{
 			Name:     fmt.Sprintf("%s (%s)", alt, key.String()),
 			URI:      value.String(),
 			IsDirect: true,

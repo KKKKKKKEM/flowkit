@@ -8,15 +8,15 @@ import (
 )
 
 // Stage 通用解析 stage：
-// 注册多个 Extractor，运行时根据 URL 匹配对应 Parser，输出 []ParseItem
+// 注册多个 Extractor，运行时根据 URL 匹配对应 Parser，输出 []Item
 type Stage struct {
-	*core.TypedStageAdapter[*Task, []ParseItem]
+	*core.TypedStageAdapter[*Task, []Item]
 	stageName  string
 	opts       stageOptions
 	extractors []Extractor
 }
 
-func (s *Stage) Exec(rc *core.Context, in *Task) (result core.TypedResult[[]ParseItem], err error) {
+func (s *Stage) Exec(rc *core.Context, in *Task) (result core.TypedResult[[]Item], err error) {
 	result.Next = s.opts.nextStageName
 
 	applyFallback(in, &s.opts.fallback)
@@ -44,7 +44,7 @@ func NewStage(name string, options ...Option) *Stage {
 	}
 	inputKey := "task"
 	outputKey := "items"
-	s.TypedStageAdapter = core.NewTypedStage[*Task, []ParseItem](
+	s.TypedStageAdapter = core.NewTypedStage[*Task, []Item](
 		name,
 		inputKey,
 		outputKey,

@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/KKKKKKKEM/flowkit/x/download"
+	"github.com/KKKKKKKEM/flowkit/stages/download"
 )
 
 type Opts struct {
@@ -33,8 +33,8 @@ func (o *Opts) ToDownloaderOpts() *download.Opts {
 
 }
 
-// ParseItem 代表一个可下载的条目（详情页 or 列表项）
-type ParseItem struct {
+// Item 代表一个可下载的条目（详情页 or 列表项）
+type Item struct {
 	Name     string         `json:"name,omitempty"`
 	URI      string         `json:"uri,omitempty"`       // 直链 or 页面 URI
 	IsDirect bool           `json:"is_direct,omitempty"` // true = 直接下载链接，false = 需继续解析
@@ -43,10 +43,10 @@ type ParseItem struct {
 
 type Task struct {
 	*Opts        `json:"*_opts,omitempty"`
-	URL          string                             `json:"url,omitempty"`           // 入口 URL
-	ForcedParser string                             `json:"forced_parser,omitempty"` // 可选：跳过 Match，直接指定解析器名
-	MaxRounds    int                                `json:"max_rounds,omitempty"`    // 可选：多轮解析深度上限（0 用 Stage 默认值）
-	OnItems      func(round int, items []ParseItem) `json:"on_items,omitempty"`
+	URL          string                        `json:"url,omitempty"`           // 入口 URL
+	ForcedParser string                        `json:"forced_parser,omitempty"` // 可选：跳过 Match，直接指定解析器名
+	MaxRounds    int                           `json:"max_rounds,omitempty"`    // 可选：多轮解析深度上限（0 用 Stage 默认值）
+	OnItems      func(round int, items []Item) `json:"on_items,omitempty"`
 }
 
 func (t *Task) CloneWithURL(url string) *Task {
@@ -80,5 +80,5 @@ type Parser struct {
 	Priority int
 	Hint     string // 语义标注，如 "search"、"detail"、"playlist"，用于日志
 
-	Parse func(ctx context.Context, task *Task, opts *Opts) ([]ParseItem, error)
+	Parse func(ctx context.Context, task *Task, opts *Opts) ([]Item, error)
 }

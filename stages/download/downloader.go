@@ -39,7 +39,8 @@ type Result struct {
 }
 
 type Opts struct {
-	Dest string `json:"dest,omitempty"`
+	Dest    string            `json:"dest,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 
 	// Proxy 指定下载使用的代理地址，支持 http://、https://、socks5:// 格式。
 	// 特殊值 "env" 表示自动读取系统环境变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）。
@@ -83,7 +84,16 @@ func NewTaskFromURI(uri string, opts *Opts, headers map[string]string) (*Task, e
 	if strings.TrimSpace(uri) == "" {
 		return nil, fmt.Errorf("uri is empty")
 	}
-	req, err := NewRequest(http.MethodGet, uri, headers)
+	mergedHeaders := map[string]string{}
+	if opts != nil && opts.Headers != nil {
+		for k, v := range opts.Headers {
+			mergedHeaders[k] = v
+		}
+	}
+	for k, v := range headers {
+		mergedHeaders[k] = v
+	}
+	req, err := NewRequest(http.MethodGet, uri, mergedHeaders)
 	if err != nil {
 		return nil, err
 	}

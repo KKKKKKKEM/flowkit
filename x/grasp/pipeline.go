@@ -8,25 +8,25 @@ import (
 	"github.com/KKKKKKKEM/flowkit"
 	"github.com/KKKKKKKEM/flowkit/core"
 	"github.com/KKKKKKKEM/flowkit/pipeline"
-	"github.com/KKKKKKKEM/flowkit/x/download"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	download2 "github.com/KKKKKKKEM/flowkit/stages/download"
+	extract2 "github.com/KKKKKKKEM/flowkit/stages/extract"
 	"github.com/KKKKKKKEM/flowkit/x/grasp/sites/pexels"
 	"github.com/google/uuid"
 )
 
 type Report struct {
-	Success     bool               `json:"success"`
-	DurationMs  int64              `json:"duration_ms"`
-	Rounds      int                `json:"rounds"`
-	ParsedItems int                `json:"parsed_items"`
-	Downloaded  []*download.Result `json:"downloaded"`
+	Success     bool                `json:"success"`
+	DurationMs  int64               `json:"duration_ms"`
+	Rounds      int                 `json:"rounds"`
+	ParsedItems int                 `json:"parsed_items"`
+	Downloaded  []*download2.Result `json:"downloaded"`
 }
 
 type Pipeline struct {
 	flowkit.App[*Task, *Report]
 	*pipeline.LinearPipeline
-	extractor         *extract.Stage
-	downloader        *download.Stage
+	extractor         *extract2.Stage
+	downloader        *download2.Stage
 	defaultSelector   SelectFunc
 	defaultTransform  TransformFunc
 	interactionPlugin core.InteractionPlugin
@@ -36,10 +36,10 @@ type Pipeline struct {
 var _ core.Pipeline = (*Pipeline)(nil)
 
 func NewGraspPipeline(opts ...Option) *Pipeline {
-	extractor := extract.NewStage("extractor")
+	extractor := extract2.NewStage("extractor")
 	extractor.Mount(&pexels.APIParser{})
 
-	downloader := download.NewStage("download")
+	downloader := download2.NewStage("download")
 	p := &Pipeline{
 		LinearPipeline:    pipeline.NewLinearPipeline(),
 		extractor:         extractor,
@@ -67,6 +67,17 @@ func (p *Pipeline) Serve(addr string, opts ...flowkit.ServeOption[*Task, *Report
 }
 
 func (p *Pipeline) Run(rc *core.Context, _ string) (*core.Report, error) {
+	v, ok := rc.State.Get("task")
+	task, ok := v.(*Task)
+	if !ok {
+		report := &core.Report{
+			Mode:         core.ModeLinear,
+			TraceID:      rc.Runtime.TraceID,
+			StageOrder:   []string{"grasp"},
+			StageResults: map[string]core.StageResult{"grasp": {Status: core.StageFailed, Err: fmt.Errorf("rc.State[\"task\"] missing or wrong type")}},
+		}
+		return report, fmt.Errorf("rc.State[\"task\"] missing or wrong type")
+	}
 	report := &core.Report{
 		Mode:         core.ModeLinear,
 		TraceID:      rc.Runtime.TraceID,
@@ -75,13 +86,7 @@ func (p *Pipeline) Run(rc *core.Context, _ string) (*core.Report, error) {
 	}
 	start := time.Now()
 
-	v, ok := rc.State.Get("task")
-	task, ok := v.(*Task)
-	if !ok {
-		return fail(report, start, fmt.Errorf("rc.State[\"task\"] missing or wrong type"))
-	}
-
-	graspReport, err := p.run(rc, task)
+	graspReport, err := p.Invoke(rc, task)
 	if err != nil {
 		return fail(report, start, err)
 	}
@@ -96,16 +101,7 @@ func (p *Pipeline) Run(rc *core.Context, _ string) (*core.Report, error) {
 }
 
 func (p *Pipeline) Invoke(rc *core.Context, task *Task) (*Report, error) {
-	rc.State.Set("task", task)
-	runReport, err := p.Run(rc, "grasp")
-	if err != nil {
-		return nil, err
-	}
-	result, ok := runReport.StageResults["grasp"].Outputs["report"].(*Report)
-	if !ok {
-		return nil, fmt.Errorf("unexpected report type in StageResults")
-	}
-	return result, nil
+	return p.run(rc, task)
 }
 
 func fail(report *core.Report, start time.Time, err error) (*core.Report, error) {
@@ -150,7 +146,7 @@ func (p *Pipeline) run(rc *core.Context, task *Task) (*Report, error) {
 	return report, nil
 }
 
-func (p *Pipeline) selectItems(rc *core.Context, task *Task, items []extract.ParseItem) ([]extract.ParseItem, error) {
+func (p *Pipeline) selectItems(rc *core.Context, task *Task, items []extract2.Item) ([]extract2.Item, error) {
 	if task.Selector != nil {
 		return task.Selector(rc, items)
 	}
@@ -184,7 +180,7 @@ func (p *Pipeline) selectItems(rc *core.Context, task *Task, items []extract.Par
 		return nil, fmt.Errorf("no items selected")
 	}
 
-	var selected []extract.ParseItem
+	var selected []extract2.Item
 
 	for _, index := range indices {
 		selected = append(selected, items[index])
@@ -213,7 +209,7 @@ func toIntSlice(v any) ([]int, error) {
 	}
 }
 
-func (p *Pipeline) runExtract(rc *core.Context, task *Task) ([]extract.ParseItem, int, error) {
+func (p *Pipeline) runExtract(rc *core.Context, task *Task) ([]extract2.Item, int, error) {
 	maxRounds := task.Extract.MaxRounds
 	if maxRounds <= 0 {
 		maxRounds = 1
@@ -224,7 +220,7 @@ func (p *Pipeline) runExtract(rc *core.Context, task *Task) ([]extract.ParseItem
 	}
 
 	extractOpts := task.toExtractOpts()
-	var allDirect []extract.ParseItem
+	var allDirect []extract2.Item
 	queue := make([]string, len(task.URLs))
 	copy(queue, task.URLs)
 
@@ -247,11 +243,11 @@ func (p *Pipeline) extractRound(
 	rc *core.Context,
 	urls []string,
 	forcedParser string,
-	opts *extract.Opts,
+	opts *extract2.Opts,
 	concurrency int,
-) (direct []extract.ParseItem, nextQueue []string, err error) {
+) (direct []extract2.Item, nextQueue []string, err error) {
 	type result struct {
-		items []extract.ParseItem
+		items []extract2.Item
 		err   error
 	}
 
@@ -267,11 +263,16 @@ func (p *Pipeline) extractRound(
 			defer func() { <-sem }()
 
 			child := rc.Fork(uuid.NewString())
-			typed, err := p.extractor.Exec(child, &extract.Task{
+			baseTask := &extract2.Task{
 				URL:          u,
 				Opts:         opts,
 				ForcedParser: forcedParser,
-			})
+			}
+			if opts != nil {
+				baseTask = baseTask.CloneWithURL(u)
+				baseTask.ForcedParser = forcedParser
+			}
+			typed, err := p.extractor.Exec(child, baseTask)
 			if err != nil {
 				results[idx] = result{err: err}
 				return
@@ -298,7 +299,7 @@ func (p *Pipeline) extractRound(
 	return direct, nextQueue, nil
 }
 
-func (p *Pipeline) buildDownloadTasks(rc *core.Context, items []extract.ParseItem, task *Task) ([]*download.Task, error) {
+func (p *Pipeline) buildDownloadTasks(rc *core.Context, items []extract2.Item, task *Task) ([]*download2.Task, error) {
 	transformFn := task.resolveTransform(p.defaultTransform)
 	baseOpts := task.toDownloadOpts()
 
@@ -307,7 +308,7 @@ func (p *Pipeline) buildDownloadTasks(rc *core.Context, items []extract.ParseIte
 		trackerBuilder = p.trackerProvider
 	}
 
-	tasks := make([]*download.Task, 0, len(items))
+	tasks := make([]*download2.Task, 0, len(items))
 	for _, item := range items {
 		t, err := transformFn(rc, item, baseOpts)
 		if err != nil {
@@ -326,7 +327,7 @@ func (p *Pipeline) buildDownloadTasks(rc *core.Context, items []extract.ParseIte
 	return tasks, nil
 }
 
-func (p *Pipeline) runDownload(rc *core.Context, tasks []*download.Task) ([]*download.Result, error) {
+func (p *Pipeline) runDownload(rc *core.Context, tasks []*download2.Task) ([]*download2.Result, error) {
 	child := rc.Fork(uuid.NewString())
 	typed, err := p.downloader.Exec(child, tasks)
 	if err != nil {
@@ -335,7 +336,7 @@ func (p *Pipeline) runDownload(rc *core.Context, tasks []*download.Task) ([]*dow
 	return typed.Output, nil
 }
 
-func bridgeDownloadTask(task *download.Task, tracker core.Tracker) {
+func bridgeDownloadTask(task *download2.Task, tracker core.Tracker) {
 	origProgress := task.OnProgress
 	task.OnProgress = func(downloaded, total int64) {
 		tracker.Update(map[string]any{"current": downloaded, "total": total})
@@ -346,7 +347,7 @@ func bridgeDownloadTask(task *download.Task, tracker core.Tracker) {
 	}
 
 	origComplete := task.OnComplete
-	task.OnComplete = func(result *download.Result) {
+	task.OnComplete = func(result *download2.Result) {
 		tracker.Done()
 		if origComplete != nil {
 			origComplete(result)

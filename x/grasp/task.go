@@ -3,8 +3,8 @@ package grasp
 import (
 	"time"
 
-	"github.com/KKKKKKKEM/flowkit/x/download"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	"github.com/KKKKKKKEM/flowkit/stages/download"
+	"github.com/KKKKKKKEM/flowkit/stages/extract"
 )
 
 type Task struct {
@@ -49,6 +49,7 @@ func (t *Task) toDownloadOpts() *download.Opts {
 		Proxy:         t.Proxy,
 		Timeout:       t.Timeout,
 		Retry:         t.Retry,
+		Headers:       t.Headers,
 		Dest:          t.Download.Dest,
 		Overwrite:     t.Download.Overwrite,
 		Concurrency:   t.Download.Concurrency,
