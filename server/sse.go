@@ -70,11 +70,11 @@ func SSE[Req, Resp any](r gin.IRouter, path string, cfg Config[Req, Resp]) {
 			}
 			rc := core.NewContext(context.Background(), sseSession.ID)
 			if !cfg.DisableInnerTrackerProvider {
-				rc.WithTrackerProvider(sse.NewSSETrackerProvider(sseSession))
+				rc.Runtime.TrackerProvider = sse.NewSSETrackerProvider(sseSession)
 			}
 
 			if !cfg.DisableInnerInteractionPlugin {
-				rc.WithInteractionPlugin(sse.NewSSEInteractionPlugin(sseSession))
+				rc.Runtime.InteractionPlugin = sse.NewSSEInteractionPlugin(sseSession)
 
 			}
 
