@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SharedState struct {
@@ -107,6 +109,11 @@ func NewContext(ctx context.Context, traceID string) *Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	if traceID == "" {
+		traceID = uuid.NewString()
+	}
+
 	return &Context{
 		ctx:     ctx,
 		State:   NewSharedState(),

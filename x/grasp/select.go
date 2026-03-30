@@ -41,10 +41,13 @@ func DefaultTransform(baseOpts *download.Opts) TransformFunc {
 		if opts == nil {
 			opts = baseOpts
 		}
-		if opts == nil {
-			opts = &download.Opts{}
+		t := download.NewTask(item.URI, opts)
+		if headers, ok := item.Meta["headers"].(map[string]string); ok && len(headers) > 0 {
+			if t.Meta == nil {
+				t.Meta = make(map[string]any)
+			}
+			t.Meta["headers"] = headers
 		}
-		headers, _ := item.Meta["headers"].(map[string]string)
-		return download.NewTaskFromURI(item.URI, opts, headers)
+		return t, nil
 	}
 }

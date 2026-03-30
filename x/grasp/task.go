@@ -49,7 +49,6 @@ func (t *Task) toDownloadOpts() *download.Opts {
 		Proxy:         t.Proxy,
 		Timeout:       t.Timeout,
 		Retry:         t.Retry,
-		Headers:       t.Headers,
 		Dest:          t.Download.Dest,
 		Overwrite:     t.Download.Overwrite,
 		Concurrency:   t.Download.Concurrency,

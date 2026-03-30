@@ -9,22 +9,23 @@ import (
 
 type batchResult struct {
 	idx    int
-	task   *Task
+	uri    string
 	result *Result
 	err    error
 }
 
 type Stage struct {
 	*core.TypedStageAdapter[[]*Task, []*Result]
-	stageName string
-	opts      stageOptions
+	stageName   string
+	opts        stageOptions
+	downloaders []Downloader
 }
 
 func (s *Stage) Name() string {
 	return s.stageName
 }
 
-func applyFallback(task *Task, fb *Opts, headers map[string]string) {
+func (s *Stage) ApplyFallback(task *Task, fb *Opts) {
 	if task.Opts == nil {
 		task.Opts = &Opts{}
 	}
@@ -40,67 +41,37 @@ func applyFallback(task *Task, fb *Opts, headers map[string]string) {
 	if task.Opts.RetryInterval == 0 {
 		task.Opts.RetryInterval = fb.RetryInterval
 	}
-	if task.Opts.Headers == nil && fb.Headers != nil {
-		task.Opts.Headers = make(map[string]string, len(fb.Headers))
-		for k, v := range fb.Headers {
-			task.Opts.Headers[k] = v
-		}
-	} else if fb.Headers != nil {
-		for k, v := range fb.Headers {
-			if _, exists := task.Opts.Headers[k]; !exists {
-				task.Opts.Headers[k] = v
-			}
+}
+
+// Register 追加一个 Downloader（后注册的优先级更高）。
+func (s *Stage) Register(downloaders ...Downloader) {
+	for _, downloader := range downloaders {
+		s.downloaders = append([]Downloader{downloader}, s.downloaders...)
+	}
+}
+
+// Dispatch 找到第一个能处理该任务的 Downloader。
+func (s *Stage) Dispatch(task *Task) (Downloader, error) {
+	for _, d := range s.downloaders {
+		if d.CanHandle(task) {
+			return d, nil
 		}
 	}
-	if headers != nil {
-		if task.Request == nil {
-			return
-		}
-		if task.Request.Header == nil {
-			task.Request.Header = make(map[string][]string)
-		}
-		for k, v := range headers {
-			if _, exists := task.Request.Header[k]; !exists {
-				task.Request.Header[k] = []string{v}
-			}
-		}
-	}
+	return nil, fmt.Errorf("no downloader available for URI: %s", task.URI)
 }
 
 func (s *Stage) Exec(rc *core.Context, in []*Task) (result core.TypedResult[[]*Result], err error) {
 	result.Next = s.opts.nextStageName
 
 	for _, task := range in {
-		applyFallback(task, &s.opts.fallback, s.opts.fallback.Headers)
+		s.ApplyFallback(task, &s.opts.fallback)
 	}
 
-	if len(in) == 1 {
-		var one *Result
-		one, err = s.downloadOne(rc, in[0])
-		if err != nil {
-			return
-		}
-		result.Output = []*Result{one}
-		return
-	}
-
-	result.Output, err = s.downloadBatch(rc, in)
+	result.Output, err = s.download(rc, in)
 	return
 }
 
-func (s *Stage) downloadOne(rc *core.Context, task *Task) (*Result, error) {
-	dl := NewHTTPDownloader()
-	result, err := dl.Download(rc, task)
-	if err != nil {
-		return nil, err
-	}
-	if task.OnComplete != nil {
-		task.OnComplete(result)
-	}
-	return result, nil
-}
-
-func (s *Stage) downloadBatch(rc *core.Context, tasks []*Task) ([]*Result, error) {
+func (s *Stage) download(rc *core.Context, tasks []*Task) ([]*Result, error) {
 	resultsCh := make(chan batchResult, len(tasks))
 	var wg sync.WaitGroup
 
@@ -108,12 +79,16 @@ func (s *Stage) downloadBatch(rc *core.Context, tasks []*Task) ([]*Result, error
 		wg.Add(1)
 		go func(i int, t *Task) {
 			defer wg.Done()
-			dl := NewHTTPDownloader()
+			dl, err := s.Dispatch(t)
+			if err != nil {
+				resultsCh <- batchResult{idx: i, uri: t.URI, err: err}
+				return
+			}
 			res, err := dl.Download(rc, t)
 			if err == nil && t.OnComplete != nil {
 				t.OnComplete(res)
 			}
-			resultsCh <- batchResult{idx: i, task: t, result: res, err: err}
+			resultsCh <- batchResult{idx: i, uri: t.URI, result: res, err: err}
 		}(idx, task)
 	}
 
@@ -123,7 +98,7 @@ func (s *Stage) downloadBatch(rc *core.Context, tasks []*Task) ([]*Result, error
 	results := make([]*Result, len(tasks))
 	for br := range resultsCh {
 		if br.err != nil {
-			return nil, fmt.Errorf("download failed for %s: %w", br.task.Request.URL, br.err)
+			return nil, fmt.Errorf("download failed for %s: %w", br.uri, br.err)
 		}
 		results[br.idx] = br.result
 	}
@@ -138,13 +113,13 @@ func NewStage(name string, options ...Option) *Stage {
 	for _, opt := range options {
 		opt(&s.opts)
 	}
-	inputKey := "tasks"
-	outputKey := "results"
+
+	s.Register(s.opts.extraDownloaders...)
 
 	s.TypedStageAdapter = core.NewTypedStage[[]*Task, []*Result](
 		name,
-		inputKey,
-		outputKey,
+		"tasks",
+		"results",
 		s,
 	)
 	return s

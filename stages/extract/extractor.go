@@ -30,7 +30,6 @@ func (o *Opts) ToDownloaderOpts() *download.Opts {
 		Timeout: o.Timeout,
 		Retry:   o.Retry,
 	}
-
 }
 
 // Item 代表一个可下载的条目（详情页 or 列表项）

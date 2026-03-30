@@ -12,7 +12,7 @@ type TypedStageAdapter[In any, Out any] struct {
 func (a *TypedStageAdapter[In, Out]) Name() string { return a.name }
 
 func (a *TypedStageAdapter[In, Out]) Run(rc *Context) StageResult {
-	in, ok := GetAs[In](rc, a.keyIn)
+	in, ok := GetState[In](rc, a.keyIn)
 	if !ok {
 		return StageResult{
 			Status: StageFailed,
@@ -48,11 +48,11 @@ func NewTypedStage[In any, Out any](name string, keyIn string, keyOut string, st
 
 }
 
-func SetAs[T any](rc *Context, key string, value T) {
+func SetState[T any](rc *Context, key string, value T) {
 	rc.State.Set(key, value)
 }
 
-func GetAs[T any](rc *Context, key string) (T, bool) {
+func GetState[T any](rc *Context, key string) (T, bool) {
 	var zero T
 	v, ok := rc.State.Get(key)
 	if !ok {
