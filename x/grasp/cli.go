@@ -11,17 +11,19 @@ func buildCLI(args []string) (*Task, error) {
 	fs := flag.NewFlagSet("grasp", flag.ContinueOnError)
 
 	var (
-		urls        string
-		proxy       string
-		timeout     time.Duration
-		retry       int
-		headers     string
-		maxRounds   int
-		concurrency int
-		dest        string
-		overwrite   bool
-		dlConc      int
-		chunkSize   int64
+		urls                string
+		proxy               string
+		timeout             time.Duration
+		retry               int
+		headers             string
+		maxRounds           int
+		extractConcurrency  int
+		dest                string
+		overwrite           bool
+		downloadTaskConc    int
+		bestEffort          bool
+		downloadSegmentConc int
+		chunkSize           int64
 	)
 
 	fs.StringVar(&urls, "url", "", "comma-separated URLs to grasp (required)")
@@ -30,10 +32,12 @@ func buildCLI(args []string) (*Task, error) {
 	fs.IntVar(&retry, "retry", 3, "retry count")
 	fs.StringVar(&headers, "header", "", "extra headers, format: Key:Value,Key2:Value2")
 	fs.IntVar(&maxRounds, "rounds", 1, "max extract rounds")
-	fs.IntVar(&concurrency, "concurrency", 1, "extract concurrency")
+	fs.IntVar(&extractConcurrency, "extract-concurrency", 1, "max concurrent extract workers")
 	fs.StringVar(&dest, "dest", ".", "download destination directory")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing files")
-	fs.IntVar(&dlConc, "dl-concurrency", 3, "download concurrency")
+	fs.IntVar(&downloadTaskConc, "download-task-concurrency", 0, "max concurrent download tasks (0 = no extra limit)")
+	fs.BoolVar(&bestEffort, "best-effort", false, "continue downloading other tasks after individual failures")
+	fs.IntVar(&downloadSegmentConc, "download-segment-concurrency", 3, "concurrent segments per download task")
 	fs.Int64Var(&chunkSize, "chunk-size", 0, "download chunk size in bytes (0 = auto)")
 
 	if err := fs.Parse(args); err != nil {
@@ -50,14 +54,16 @@ func buildCLI(args []string) (*Task, error) {
 		Timeout: timeout,
 		Retry:   retry,
 		Extract: ExtractConfig{
-			MaxRounds:   maxRounds,
-			Concurrency: concurrency,
+			MaxRounds:         maxRounds,
+			WorkerConcurrency: extractConcurrency,
 		},
 		Download: DownloadConfig{
-			Dest:        dest,
-			Overwrite:   overwrite,
-			Concurrency: dlConc,
-			ChunkSize:   chunkSize,
+			Dest:               dest,
+			Overwrite:          overwrite,
+			TaskConcurrency:    downloadTaskConc,
+			BestEffort:         bestEffort,
+			SegmentConcurrency: downloadSegmentConc,
+			ChunkSize:          chunkSize,
 		},
 	}
 

@@ -23,6 +23,11 @@ type Stage interface {
 	Run(rc *Context) StageResult
 }
 
+type TypedStage[In any, Out any] interface {
+	Name() string
+	Exec(rc *Context, in In) (result TypedResult[Out], err error)
+}
+
 // StageResult 是单个 Stage 执行的结果
 type StageResult struct {
 	// Status 本次执行的结果状态
@@ -35,6 +40,12 @@ type StageResult struct {
 	Metrics map[string]float64 `json:"metrics,omitempty"`
 	// Err 如果执行失败则设置错误
 	Err error `json:"err,omitempty"`
+}
+
+type TypedResult[Out any] struct {
+	Output  Out
+	Next    string
+	Metrics map[string]float64
 }
 
 // IsSuccess 便利方法：检查是否成功

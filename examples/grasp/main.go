@@ -9,12 +9,7 @@ import (
 func main() {
 	p := grasp.NewGraspPipeline()
 
-	err := p.CLI()
-	if err != nil {
+	if err := p.Launch(); err != nil {
 		log.Fatal(err)
 	}
-
-	//if err := p.Serve(":8080"); err != nil {
-	//	log.Fatal(err)
-	//}
 }

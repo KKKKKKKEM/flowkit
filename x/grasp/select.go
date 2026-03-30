@@ -3,20 +3,20 @@ package grasp
 import (
 	"context"
 
-	"github.com/KKKKKKKEM/flowkit/x/download"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	"github.com/KKKKKKKEM/flowkit/stages/download"
+	"github.com/KKKKKKKEM/flowkit/stages/extract"
 )
 
-type SelectFunc func(ctx context.Context, items []extract.ParseItem) ([]extract.ParseItem, error)
+type SelectFunc func(ctx context.Context, items []extract.Item) ([]extract.Item, error)
 
-type TransformFunc func(ctx context.Context, item extract.ParseItem, baseOpts *download.Opts) (*download.Task, error)
+type TransformFunc func(ctx context.Context, item extract.Item, baseOpts *download.Opts) (*download.Task, error)
 
-func SelectAll(_ context.Context, items []extract.ParseItem) ([]extract.ParseItem, error) {
+func SelectAll(_ context.Context, items []extract.Item) ([]extract.Item, error) {
 	return items, nil
 }
 
 func SelectFirst(n int) SelectFunc {
-	return func(_ context.Context, items []extract.ParseItem) ([]extract.ParseItem, error) {
+	return func(_ context.Context, items []extract.Item) ([]extract.Item, error) {
 		if n >= len(items) {
 			return items, nil
 		}
@@ -25,8 +25,8 @@ func SelectFirst(n int) SelectFunc {
 }
 
 func SelectByIndices(indices []int) SelectFunc {
-	return func(_ context.Context, items []extract.ParseItem) ([]extract.ParseItem, error) {
-		var out []extract.ParseItem
+	return func(_ context.Context, items []extract.Item) ([]extract.Item, error) {
+		var out []extract.Item
 		for _, idx := range indices {
 			if idx >= 0 && idx < len(items) {
 				out = append(out, items[idx])
@@ -37,14 +37,17 @@ func SelectByIndices(indices []int) SelectFunc {
 }
 
 func DefaultTransform(baseOpts *download.Opts) TransformFunc {
-	return func(_ context.Context, item extract.ParseItem, opts *download.Opts) (*download.Task, error) {
+	return func(_ context.Context, item extract.Item, opts *download.Opts) (*download.Task, error) {
 		if opts == nil {
 			opts = baseOpts
 		}
-		if opts == nil {
-			opts = &download.Opts{}
+		t := download.NewTask(item.URI, opts)
+		if headers, ok := item.Meta["headers"].(map[string]string); ok && len(headers) > 0 {
+			if t.Meta == nil {
+				t.Meta = make(map[string]any)
+			}
+			t.Meta["headers"] = headers
 		}
-		headers, _ := item.Meta["headers"].(map[string]string)
-		return download.NewTaskFromURI(item.URI, opts, headers)
+		return t, nil
 	}
 }

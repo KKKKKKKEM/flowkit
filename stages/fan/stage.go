@@ -47,7 +47,7 @@ func (s *Stage) runWaitAllFailFast(rc *core.Context) core.StageResult {
 		result core.StageResult
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(rc)
 	defer cancel()
 
 	ch := make(chan subResult, len(s.children))
@@ -62,7 +62,7 @@ func (s *Stage) runWaitAllFailFast(rc *core.Context) core.StageResult {
 				return
 			default:
 			}
-			r := child.Run(rc)
+			r := child.Run(rc.WithContext(ctx))
 			select {
 			case ch <- subResult{name: child.Name(), result: r}:
 			case <-ctx.Done():
@@ -96,7 +96,7 @@ func (s *Stage) runWaitAny(rc *core.Context) core.StageResult {
 		result core.StageResult
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(rc)
 	defer cancel()
 
 	ch := make(chan subResult, len(s.children))
@@ -111,7 +111,7 @@ func (s *Stage) runWaitAny(rc *core.Context) core.StageResult {
 				return
 			default:
 			}
-			r := child.Run(rc)
+			r := child.Run(rc.WithContext(ctx))
 			select {
 			case ch <- subResult{name: child.Name(), result: r}:
 			case <-ctx.Done():

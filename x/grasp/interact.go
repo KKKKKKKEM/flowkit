@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/KKKKKKKEM/flowkit/core"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	"github.com/KKKKKKKEM/flowkit/stages/extract"
 )
 
 type CLIInteractionPlugin struct {
@@ -19,9 +19,9 @@ func (p *CLIInteractionPlugin) FormatResult(rc *core.Context, i core.Interaction
 		indices []int
 		err     error
 	)
-	items, ok := i.Payload.([]extract.ParseItem)
+	items, ok := i.Payload.([]extract.Item)
 	if !ok {
-		return nil, fmt.Errorf("invalid interaction payload: expected []extract.ParseItem, got %T", i.Payload)
+		return nil, fmt.Errorf("invalid interaction payload: expected []extract.Item, got %T", i.Payload)
 	}
 
 	line := strings.TrimSpace(fmt.Sprintf("%v", result.Answer))
@@ -40,9 +40,9 @@ func (p *CLIInteractionPlugin) FormatResult(rc *core.Context, i core.Interaction
 }
 
 func (p *CLIInteractionPlugin) Interact(rc *core.Context, i core.Interaction) (*core.InteractionResult, error) {
-	items, ok := i.Payload.([]extract.ParseItem)
+	items, ok := i.Payload.([]extract.Item)
 	if !ok {
-		return nil, fmt.Errorf("invalid interaction payload: expected []extract.ParseItem, got %T", i.Payload)
+		return nil, fmt.Errorf("invalid interaction payload: expected []extract.Item, got %T", i.Payload)
 	}
 	fmt.Println()
 	for idx, item := range items {

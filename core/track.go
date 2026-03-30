@@ -10,14 +10,3 @@ type Tracker interface {
 	Flush()
 	Done()
 }
-
-const trackerBuilderKey = "__trackerBuilder__"
-
-func (rc *Context) WithTrackerProvider(builder TrackerProvider) {
-	rc.Values[trackerBuilderKey] = builder
-}
-
-func (rc *Context) TrackerProvider() TrackerProvider {
-	builder, _ := rc.Values[trackerBuilderKey].(TrackerProvider)
-	return builder
-}

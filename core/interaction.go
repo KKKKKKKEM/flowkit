@@ -30,18 +30,6 @@ func (e *ErrInteractionRequired) Error() string {
 	return fmt.Sprintf("interaction required: type=%s", e.Interaction.Type)
 }
 
-// interactionKey is the rc.Values key used to store SuspendFunc.
-const interactionKey = "__interaction__"
-
-func (rc *Context) WithInteractionPlugin(plugin InteractionPlugin) {
-	rc.Values[interactionKey] = plugin
-}
-
-func (rc *Context) InteractionPlugin() InteractionPlugin {
-	plugin, _ := rc.Values[interactionKey].(InteractionPlugin)
-	return plugin
-}
-
 type InteractionPlugin interface {
 	Interact(rc *Context, i Interaction) (*InteractionResult, error)
 	FormatResult(rc *Context, i Interaction, result *InteractionResult) (*InteractionResult, error)

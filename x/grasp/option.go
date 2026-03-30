@@ -2,8 +2,8 @@ package grasp
 
 import (
 	"github.com/KKKKKKKEM/flowkit/core"
-	"github.com/KKKKKKKEM/flowkit/x/download"
-	"github.com/KKKKKKKEM/flowkit/x/extract"
+	"github.com/KKKKKKKEM/flowkit/stages/download"
+	"github.com/KKKKKKKEM/flowkit/stages/extract"
 )
 
 type Option func(*Pipeline)
@@ -14,7 +14,7 @@ func WithExtractor(e *extract.Stage) Option {
 	}
 }
 
-func WithDownloader(d *download.DirectDownloadStage) Option {
+func WithDownloader(d *download.Stage) Option {
 	return func(p *Pipeline) {
 		p.downloader = d
 	}

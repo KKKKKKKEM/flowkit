@@ -47,7 +47,7 @@ func (fp *FSMPipeline) WithMaxVisits(max int) *FSMPipeline {
 func (fp *FSMPipeline) Run(rc *core.Context, entry string) (*core.Report, error) {
 	report := &core.Report{
 		Mode:         core.ModeFSM,
-		TraceID:      rc.TraceID,
+		TraceID:      rc.Runtime.TraceID,
 		StageOrder:   []string{},
 		StageResults: make(map[string]core.StageResult),
 		DurationMs:   0,
@@ -82,9 +82,7 @@ func (fp *FSMPipeline) Run(rc *core.Context, entry string) (*core.Report, error)
 		report.StageResults[name] = result
 
 		// 合并输出到共享状态
-		for k, v := range result.Outputs {
-			rc.Values[k] = v
-		}
+		rc.State.Merge(result.Outputs)
 
 		if result.IsFailed() {
 			report.Success = false

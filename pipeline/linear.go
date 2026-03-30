@@ -9,12 +9,14 @@ import (
 
 // LinearPipeline 是顺序执行的线性管道
 type LinearPipeline struct {
+	order  []string
 	stages map[string]core.Stage
 	mw     []core.Middleware
 }
 
 func NewLinearPipeline() *LinearPipeline {
 	return &LinearPipeline{
+		order:  []string{},
 		stages: make(map[string]core.Stage),
 	}
 }
@@ -25,6 +27,9 @@ func (lp *LinearPipeline) Mode() core.Mode {
 
 func (lp *LinearPipeline) Register(stages ...core.Stage) {
 	for _, s := range stages {
+		if _, exists := lp.stages[s.Name()]; !exists {
+			lp.order = append(lp.order, s.Name())
+		}
 		lp.stages[s.Name()] = s
 	}
 }
@@ -37,7 +42,7 @@ func (lp *LinearPipeline) Use(mw ...core.Middleware) *LinearPipeline {
 func (lp *LinearPipeline) Run(rc *core.Context, entry string) (*core.Report, error) {
 	report := &core.Report{
 		Mode:         core.ModeLinear,
-		TraceID:      rc.TraceID,
+		TraceID:      rc.Runtime.TraceID,
 		StageOrder:   []string{},
 		StageResults: make(map[string]core.StageResult),
 		DurationMs:   0,
@@ -45,38 +50,50 @@ func (lp *LinearPipeline) Run(rc *core.Context, entry string) (*core.Report, err
 
 	start := time.Now()
 
-	st, ok := lp.stages[entry]
-	if !ok {
+	if _, ok := lp.stages[entry]; !ok {
 		return report, fmt.Errorf("entry stage not found: %s", entry)
 	}
 
+	startIdx := -1
+	for i, name := range lp.order {
+		if name == entry {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return report, fmt.Errorf("entry stage not found in registration order: %s", entry)
+	}
+
 	runner := lp.makeStageRunner()
-	for st != nil {
+	for _, stageName := range lp.order[startIdx:] {
 		// 检查是否已取消或超时
 		if rc.Err() != nil {
-			report.StageResults[st.Name()] = core.StageResult{
+			report.StageResults[stageName] = core.StageResult{
 				Status: core.StageFailed,
 				Err:    rc.Err(),
 			}
+			report.StageOrder = append(report.StageOrder, stageName)
+			report.Success = false
 			break
 		}
 
+		st := lp.stages[stageName]
 		result := runner(rc, st)
-		report.StageOrder = append(report.StageOrder, st.Name())
-		report.StageResults[st.Name()] = result
+		report.StageOrder = append(report.StageOrder, stageName)
+		report.StageResults[stageName] = result
 
 		// 合并输出到共享状态
-		for k, v := range result.Outputs {
-			rc.Values[k] = v
-		}
+		rc.State.Merge(result.Outputs)
 
 		if result.IsFailed() {
 			report.Success = false
 			break
 		}
-
-		st = nil // Linear 模式中，每个 stage 执行一次就结束
-		report.Success = true
+	}
+	if len(report.StageOrder) > 0 {
+		last := report.StageResults[report.StageOrder[len(report.StageOrder)-1]]
+		report.Success = last.Status != core.StageFailed
 	}
 
 	report.DurationMs = time.Since(start).Milliseconds()
