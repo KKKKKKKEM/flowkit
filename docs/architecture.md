@@ -1,98 +1,110 @@
 # 架构概览
 
-Flowkit 是一个面向 Go 的轻量工作流/流水线框架，用来把一段核心业务逻辑包装成：
+## 层次模型
 
-- 可组合的 `Stage`
-- 可编排的 `Pipeline`
-- 可直接启动的 `App`
-- 同时支持 **CLI** 与 **HTTP/SSE** 两种运行入口
-
-它的核心目标不是做一个“大而全”的 DAG 平台，而是提供一套足够清晰、类型友好、可嵌入应用的执行模型，让你可以把：
-
-- 解析
-- 分支
-- 并发
-- 下载
-- 交互
-- 进度追踪
-
-这些能力组织成一套统一的执行流。
-
-## 项目结构
-
-```text
-.
-├── app.go                # 顶层 App 门面：Launch / CLI / Serve
-├── cli/                  # CLI transport adapter
-├── core/                 # 核心抽象：App / Context / Pipeline / Stage / Interaction / Tracker
-├── pipeline/             # Pipeline 执行器实现（Linear / FSM）
-├── server/               # HTTP / SSE transport adapter
-├── stages/               # 内置 stage 实现
-│   ├── cond/             # 条件跳转
-│   ├── download/         # 下载阶段
-│   ├── extract/          # 提取阶段
-│   ├── fan/              # 并发聚合阶段
-│   └── internal/defaults/# 默认值合并辅助
-├── x/grasp/              # 基于 Flowkit 构建的真实应用示例
-└── examples/grasp/       # 最小启动示例
 ```
+┌─────────────────────────────────────────┐
+│                  App                    │  ← 顶层门面，持有 Invoke 函数
+│          App[Req, Resp]                 │
+└──────────────┬──────────────────────────┘
+               │ Invoke(ctx, req) → resp
+               ▼
+┌─────────────────────────────────────────┐
+│               Pipeline                  │  ← 编排 Stage 的执行顺序
+│  LinearPipeline │ FSMPipeline           │
+└──────────────┬──────────────────────────┘
+               │ Run(ctx) StageResult
+               ▼
+┌─────────────────────────────────────────┐
+│                 Stage                   │  ← 原子业务单元
+│  Stage │ TypedStage[In, Out]            │
+└──────────────┬──────────────────────────┘
+               │ 读写 SharedState
+               ▼
+┌─────────────────────────────────────────┐
+│              core.Context               │  ← 跨 Stage 共享状态 + 运行时
+│  context.Context + SharedState          │
+│  + TrackerProvider + InteractionPlugin  │
+└─────────────────────────────────────────┘
+```
+
+## 传输层解耦
+
+App 本身不感知传输协议。相同的 `App.Invoke` 可被两类 transport 调用：
+
+```
+           ┌─ CLI ─────────────────────────────────────────┐
+           │  os.Args → CLIBuilder → Req                   │
+           │  Resp → 打印到 stdout                          │
+  App ─────┤                                               │
+           └─ HTTP / SSE ───────────────────────────────────┘
+              POST /invoke → JSON Body → Req
+              SSE /stream  → session → 流式事件推送
+              POST /answer → 交互回传
+```
+
+CLI 使用 `CLITrackerProvider`（终端 mpb 进度条）和 `CLIInteractionPlugin`（stdin 提示输入）。
+
+SSE 使用 `SSETrackerProvider`（向客户端推送 `track` 事件）和 `SSEInteractionPlugin`（向客户端推送 `interact` 事件，挂起直到 `/answer` 回传）。
 
 ## 模块职责
 
-### `app.go`
+| 包 | 职责 |
+|----|------|
+| `app.go` | 顶层门面：`NewApp`、`Launch`、`CLI`、`Serve` |
+| `core/` | 纯接口定义：`App`、`Context`、`Pipeline`、`Stage`、`Middleware`、`InteractionPlugin`、`TrackerProvider` |
+| `pipeline/` | 执行器实现：`LinearPipeline`、`FSMPipeline` |
+| `server/` | HTTP transport：简单 req/resp（`http.go`）和 SSE 会话（`sse.go` + `sse/`） |
+| `stages/cond` | 条件跳转 Stage，配合 FSM 使用 |
+| `stages/fan` | 并发 fan-out Stage |
+| `stages/extract` | 内容提取 Stage，URL 匹配 → Parser → `[]Item` |
+| `stages/download` | 批量下载 Stage，分片 + 并发 + 失败策略 |
+| `x/grasp` | 完整应用示例，组合 extract + download |
 
-顶层门面，统一封装：
+## 数据流（以 x/grasp 为例）
 
-- `App.CLI(...)`
-- `App.Serve(...)`
-- `App.Launch(...)`
+```
+HTTP POST /invoke
+  │
+  ├─ 创建 core.Context（含 SSETrackerProvider + SSEInteractionPlugin）
+  │
+  ▼
+App.Invoke(ctx, req)
+  │
+  ▼
+GraspPipeline.Run(ctx)
+  │
+  ├─ Stage 1: extract.Stage
+  │    读 req.URL → 匹配 Parser → 写 ctx.SharedState["items"]
+  │    同时 → ctx.Track("extract", ...)  → SSE track 事件
+  │
+  ├─ Stage 2: select.Stage（交互）
+  │    读 ctx.SharedState["items"]
+  │    → ctx.Interact(...)              → SSE interact 事件（挂起）
+  │    ← POST /answer                  → 恢复执行
+  │    写 ctx.SharedState["selected"]
+  │
+  ├─ Stage 3: transform.Stage
+  │    读 ctx.SharedState["selected"] → 写 ctx.SharedState["tasks"]
+  │
+  └─ Stage 4: download.Stage
+       读 ctx.SharedState["tasks"]
+       → ctx.Track("dl:*", ...)         → SSE track 事件（进度）
+       → SSE done 事件
+```
 
-### `core/`
+## Context 生命周期
 
-定义所有核心抽象：
+```
+请求到达
+  │
+  ├─ server 层创建根 Context（NewContext）
+  │
+  ├─ Pipeline 直接传递同一 Context 给各 Stage
+  │
+  └─ Stage 可调用：
+       ctx.Fork(traceID)    ← 新 SharedState（独立子任务）
+       ctx.Derive(traceID)  ← 共享 SharedState（同一任务，新 trace）
+```
 
-- `App`
-- `Context`
-- `Pipeline`
-- `Stage`
-- `TypedStage`
-- `InteractionPlugin`
-- `TrackerProvider`
-
-### `pipeline/`
-
-提供执行器实现：
-
-- `LinearPipeline`
-- `FSMPipeline`
-
-### `stages/`
-
-提供内置业务能力：
-
-- `cond`
-- `fan`
-- `extract`
-- `download`
-
-### `cli/`
-
-命令行 transport adapter。
-
-### `server/`
-
-HTTP / SSE transport adapter。
-
-### `x/grasp/`
-
-一个真实的 Flowkit 应用，展示如何组合 stage、pipeline、tracker 与 interaction plugin。
-
-## 推荐阅读入口
-
-- `app.go`
-- `core/context.go`
-- `core/stage.go`
-- `core/pipeline.go`
-- `pipeline/linear.go`
-- `pipeline/fsm.go`
-- `x/grasp/pipeline.go`
+`Fork` 适用于完全独立的子任务（如 fan.Stage 并发分支）；`Derive` 适用于需要共享上下文但要区分 trace 的场景。

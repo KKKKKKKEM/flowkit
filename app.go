@@ -55,6 +55,7 @@ func DisableInteractionPlugin[Req, Resp any]() ServeOption[Req, Resp] {
 type cliConfig[Req, Resp any] struct {
 	args              []string
 	builder           func([]string) (Req, error)
+	autoFlags         bool
 	trackerProvider   core.TrackerProvider
 	interactionPlugin core.InteractionPlugin
 	onResult          func(Resp)
@@ -69,6 +70,10 @@ func WithCLIBuilder[Req, Resp any](fn func([]string) (Req, error)) CLIOption[Req
 
 func WithCLIArgs[Req, Resp any](args []string) CLIOption[Req, Resp] {
 	return func(c *cliConfig[Req, Resp]) { c.args = args }
+}
+
+func WithCLIAutoFlags[Req, Resp any]() CLIOption[Req, Resp] {
+	return func(c *cliConfig[Req, Resp]) { c.autoFlags = true }
 }
 
 func WithTrackerProvider[Req, Resp any](tp core.TrackerProvider) CLIOption[Req, Resp] {
@@ -105,6 +110,7 @@ type launchConfig[Req, Resp any] struct {
 	serve        serveConfig[Req, Resp]
 	modeResolver func(args []string) (LaunchPlan, error)
 	httpAddr     string
+	helpPrinter  func()
 }
 
 type LaunchOption[Req, Resp any] func(*launchConfig[Req, Resp])
@@ -137,13 +143,25 @@ func WithLaunchServeOptions[Req, Resp any](opts ...ServeOption[Req, Resp]) Launc
 	}
 }
 
-func defaultModeResolver(defaultHTTPAddr string) func(args []string) (LaunchPlan, error) {
+func defaultModeResolver(defaultHTTPAddr string, helpPrinter func()) func(args []string) (LaunchPlan, error) {
 	return func(args []string) (LaunchPlan, error) {
 		if len(args) == 0 {
 			return LaunchPlan{Mode: LaunchModeCLI, Args: nil}, nil
 		}
 
 		switch args[0] {
+		case "help":
+			fmt.Fprintf(os.Stdout, "Usage:\n")
+			fmt.Fprintf(os.Stdout, "  run  [flags]        run the application (CLI mode)\n")
+			fmt.Fprintf(os.Stdout, "  serve               start the HTTP/SSE server\n")
+			fmt.Fprintf(os.Stdout, "    --addr string     listen address (default %q)\n", defaultHTTPAddr)
+			fmt.Fprintf(os.Stdout, "  help                show this help\n")
+			if helpPrinter != nil {
+				fmt.Fprintf(os.Stdout, "\nFlags (run mode):\n")
+				helpPrinter()
+			}
+			os.Exit(0)
+			return LaunchPlan{}, nil
 		case "serve":
 			fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 			addr := fs.String("addr", defaultHTTPAddr, "")
@@ -200,6 +218,7 @@ func (a *App[Req, Resp]) CLI(opts ...CLIOption[Req, Resp]) error {
 		App:               core.AppFunc[Req, Resp](a.invoke),
 		Args:              cfg.args,
 		Builder:           cfg.builder,
+		AutoFlags:         cfg.autoFlags,
 		TrackerProvider:   cfg.trackerProvider,
 		InteractionPlugin: cfg.interactionPlugin,
 		OnResult:          cfg.onResult,
@@ -246,7 +265,13 @@ func (a *App[Req, Resp]) Launch(opts ...LaunchOption[Req, Resp]) error {
 
 	resolver := cfg.modeResolver
 	if resolver == nil {
-		resolver = defaultModeResolver(cfg.httpAddr)
+		helpPrinter := cfg.helpPrinter
+		if helpPrinter == nil && cfg.cli.autoFlags {
+			if fs, err := cli.BuildFlagSet[Req]("run"); err == nil {
+				helpPrinter = func() { fs.PrintDefaults() }
+			}
+		}
+		resolver = defaultModeResolver(cfg.httpAddr, helpPrinter)
 	}
 
 	plan, err := resolver(args)
@@ -266,6 +291,7 @@ func (a *App[Req, Resp]) Launch(opts ...LaunchOption[Req, Resp]) error {
 			App:               core.AppFunc[Req, Resp](a.invoke),
 			Args:              plan.Args,
 			Builder:           cfg.cli.builder,
+			AutoFlags:         cfg.cli.autoFlags,
 			TrackerProvider:   cfg.cli.trackerProvider,
 			InteractionPlugin: cfg.cli.interactionPlugin,
 			OnResult:          cfg.cli.onResult,

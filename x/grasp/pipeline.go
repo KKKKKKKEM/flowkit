@@ -72,7 +72,7 @@ func NewGraspPipeline(opts ...Option) *Pipeline {
 
 func (p *Pipeline) CLI(opts ...flowkit.CLIOption[*Task, *Report]) error {
 	return p.App.CLI(append([]flowkit.CLIOption[*Task, *Report]{
-		flowkit.WithCLIBuilder[*Task, *Report](buildCLI),
+		flowkit.WithCLIAutoFlags[*Task, *Report](),
 		flowkit.WithTrackerProvider[*Task, *Report](p.trackerProvider),
 		flowkit.WithInteractionPlugin[*Task, *Report](p.interactionPlugin),
 	}, opts...)...)
@@ -85,7 +85,7 @@ func (p *Pipeline) Serve(addr string, opts ...flowkit.ServeOption[*Task, *Report
 func (p *Pipeline) Launch(opts ...flowkit.LaunchOption[*Task, *Report]) error {
 	return p.App.Launch(append([]flowkit.LaunchOption[*Task, *Report]{
 		flowkit.WithLaunchCLIOptions[*Task, *Report](
-			flowkit.WithCLIBuilder[*Task, *Report](buildCLI),
+			flowkit.WithCLIAutoFlags[*Task, *Report](),
 			flowkit.WithTrackerProvider[*Task, *Report](p.trackerProvider),
 			flowkit.WithInteractionPlugin[*Task, *Report](p.interactionPlugin),
 		),

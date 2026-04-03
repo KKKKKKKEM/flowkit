@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 
@@ -18,6 +20,7 @@ type Config[Req, Resp any] struct {
 	App               core.App[Req, Resp]
 	Args              []string
 	Builder           func(args []string) (Req, error)
+	AutoFlags         bool
 	OnResult          func(resp Resp)
 	OnError           func(err error)
 	TrackerProvider   core.TrackerProvider
@@ -34,7 +37,6 @@ func Run[Req, Resp any](cfg Config[Req, Resp]) error {
 	if onResult == nil {
 		onResult = func(resp Resp) {
 			enc := json.NewEncoder(os.Stdout)
-			// enc.SetIndent("", "  ")
 			_ = enc.Encode(resp)
 		}
 	}
@@ -47,7 +49,21 @@ func Run[Req, Resp any](cfg Config[Req, Resp]) error {
 		}
 	}
 
-	req, err := cfg.Builder(args)
+	var (
+		req Req
+		err error
+	)
+	switch {
+	case cfg.Builder != nil:
+		req, err = cfg.Builder(args)
+	case cfg.AutoFlags:
+		req, err = ParseFlagsPtr[Req](args)
+		if errors.Is(err, flag.ErrHelp) {
+			os.Exit(0)
+		}
+	default:
+		err = fmt.Errorf("cli.Run: Builder or AutoFlags must be set")
+	}
 	if err != nil {
 		onError(fmt.Errorf("build request: %w", err))
 		return err
